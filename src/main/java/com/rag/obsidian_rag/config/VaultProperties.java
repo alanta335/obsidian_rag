@@ -31,6 +31,8 @@ public class VaultProperties {
     /** NVIDIA NIM endpoint and model selection. */
     @Data
     public static class Nvidia {
+        /** NVIDIA API key; resolved from {@code NVIDIA_API_KEY} (env var or .env). Blank fails fast at startup. */
+        private String apiKey = "";
         private String baseUrl = "https://integrate.api.nvidia.com/v1";
         private String chatModel = "deepseek-ai/deepseek-v4-flash-0731";
         private String embeddingModel = "nvidia/nv-embedqa-e5-v5";

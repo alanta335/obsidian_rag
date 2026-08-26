@@ -38,7 +38,7 @@ public class LangChain4jConfig {
         var n = props.getNvidia();
         return OpenAiChatModel.builder()
                 .baseUrl(n.getBaseUrl())
-                .apiKey(requiredApiKey())
+                .apiKey(requiredApiKey(props))
                 .modelName(n.getChatModel())
                 .temperature(n.getTemperature())
                 .maxTokens(n.getMaxTokens())
@@ -115,7 +115,7 @@ public class LangChain4jConfig {
         var n = props.getNvidia();
         return OpenAiEmbeddingModel.builder()
                 .baseUrl(n.getBaseUrl())
-                .apiKey(requiredApiKey())
+                .apiKey(requiredApiKey(props))
                 .modelName(n.getEmbeddingModel())
                 .customParameters(Map.of("input_type", inputType))
                 .timeout(Duration.ofSeconds(120))
@@ -123,17 +123,20 @@ public class LangChain4jConfig {
     }
 
     /**
-     * Reads NVIDIA_API_KEY from the environment.
+     * Reads NVIDIA_API_KEY as resolved by Spring (real environment variable first,
+     * then a .env file entry via spring-dotenv, then application.yaml default).
      *
+     * @param props effective obsidian.rag.* configuration
      * @return non-blank API key
-     * @throws IllegalStateException when the variable is unset or blank
+     * @throws IllegalStateException when the resolved value is unset or blank (fail-fast at startup)
      */
-    private String requiredApiKey() {
-        String key = System.getenv("NVIDIA_API_KEY");
+    private String requiredApiKey(VaultProperties props) {
+        String key = props.getNvidia().getApiKey();
         if (key == null || key.isBlank()) {
             throw new IllegalStateException(
                     "Environment variable NVIDIA_API_KEY is not set. "
-                            + "Create a free key at https://build.nvidia.com/settings");
+                            + "Create a free key at https://build.nvidia.com/settings "
+                            + "(set it in your environment or in a local .env file)");
         }
         return key;
     }

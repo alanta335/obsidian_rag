@@ -1,19 +1,24 @@
 spring:
   application:
     name: obsidian_rag
+  config:
+    # Loads ./.env (KEY=value) as a property source; [.properties] forces properties parsing.
+    # Real environment variables still take precedence over .env values.
+    import: "optional:file:.env[.properties]"
 
 server:
   port: 8080
 
 obsidian:
   rag:
-    # Path to your Obsidian vault root (set via env var, e.g. D:/Notes/MyVault)
+    # Values resolve in this order: real environment variable > .env file > default.
     vault-path: ${OBSIDIAN_VAULT_PATH:}
     chunk-size: 1500
     chunk-overlap: 200
     state-file: ./data/index-state.json
 
     nvidia:
+      api-key: ${NVIDIA_API_KEY:}
       base-url: https://integrate.api.nvidia.com/v1
       chat-model: deepseek-ai/deepseek-v4-flash-0731
       embedding-model: nvidia/nv-embedqa-e5-v5
@@ -35,11 +40,11 @@ obsidian:
       regenerate-if-unfaithful: true
 
     store:
-      host: localhost
-      port: 5433
-      database: obsidian_rag
-      user: postgres
-      password: postgres
+      host: ${POSTGRES_HOST:localhost}
+      port: ${POSTGRES_PORT:5433}
+      database: ${POSTGRES_DB:obsidian_rag}
+      user: ${POSTGRES_USER:postgres}
+      password: ${POSTGRES_PASSWORD:postgres}
       table: obsidian_segments
 
 logging:
