@@ -26,6 +26,8 @@ public record ObsidianNote(
         List<WikiLink> links) {
 
     /**
+     * One outgoing wikilink, decomposed into its parts.
+     *
      * @param target link target before any '#' anchor or '|' alias (may include folder path)
      * @param anchor optional heading anchor after '#'
      * @param alias  optional display text after '|'

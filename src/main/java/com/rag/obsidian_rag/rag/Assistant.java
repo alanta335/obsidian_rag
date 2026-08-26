@@ -13,6 +13,14 @@ import dev.langchain4j.service.V;
  */
 public interface Assistant {
 
+    /**
+     * Produces a structured, fully cited answer for the given question.
+     *
+     * @param question user question
+     * @param context  pre-retrieved vault fragments; the caller owns retrieval
+     * @return grounded {@link RagAnswer}; when the evidence is insufficient the model
+     *         sets contextSufficient=false with a null answer and no citations
+     */
     @SystemMessage("""
             You are a precise research assistant answering questions about the user's personal Obsidian vault.
 

@@ -33,9 +33,23 @@ public class MarkdownSectionSplitter {
     public static final String CONTENT_HASH = "content_hash";
     public static final String TAGS_CSV = "tags_csv";
 
+    /**
+     * Utility class; no instances.
+     */
     private MarkdownSectionSplitter() {
     }
 
+    /**
+     * Splits a note into heading-scoped, embeddable chunks.
+     * Each chunk is prefixed with a {@code [Title › Heading Path]} header line and
+     * carries the base metadata plus heading_path; chunk_index runs sequentially
+     * across all sections of the note.
+     *
+     * @param note         parsed note to split
+     * @param chunkSize    maximum characters per chunk fed to the recursive splitter
+     * @param chunkOverlap character overlap between oversized chunks
+     * @return embeddable segments; empty when the note body is blank
+     */
     public static List<TextSegment> split(ObsidianNote note, int chunkSize, int chunkOverlap) {
         List<TextSegment> result = new ArrayList<>();
         DocumentSplitter splitter = DocumentSplitters.recursive(chunkSize, chunkOverlap);
@@ -60,9 +74,23 @@ public class MarkdownSectionSplitter {
         return result;
     }
 
+    /**
+     * One heading-scoped section of the note body.
+     *
+     * @param text        section text including its heading line
+     * @param headingPath ' › '-joined heading hierarchy; empty before the first heading
+     */
     private record Section(String text, String headingPath) {
     }
 
+    /**
+     * Cuts the body along ATX headings while tracking the heading stack; headings
+     * inside code fences do not split. Text before the first heading forms a
+     * section with an empty heading path.
+     *
+     * @param note parsed note
+     * @return ordered sections (blank ones dropped by {@link #flush})
+     */
     private static List<Section> sectionsOf(ObsidianNote note) {
         List<Section> sections = new ArrayList<>();
         StringBuilder buf = new StringBuilder();
@@ -98,6 +126,14 @@ public class MarkdownSectionSplitter {
         return sections;
     }
 
+    /**
+     * Appends buffered text as a section unless blank, then resets the buffer.
+     *
+     * @param sections    section accumulator (mutated)
+     * @param buf         pending section text (reset on flush)
+     * @param note        owning note (not currently read; kept for signature symmetry)
+     * @param headingPath heading path captured at flush time, or null for none
+     */
     private static void flush(List<Section> sections, StringBuilder buf, ObsidianNote note, String headingPath) {
         String text = buf.toString().trim();
         buf.setLength(0);
@@ -107,10 +143,23 @@ public class MarkdownSectionSplitter {
         sections.add(new Section(text, headingPath == null ? "" : headingPath));
     }
 
+    /**
+     * Joins the active heading stack into the stored heading_path representation.
+     *
+     * @param titles current heading titles, outermost first
+     * @return ' › '-joined path, or the empty string when no heading is active
+     */
     private static String joinPath(Deque<String> titles) {
         return String.join(" › ", titles);
     }
 
+    /**
+     * Builds the metadata shared by all chunks of a note: file path, title, content
+     * hash and lowercase CSV tags (absent when the note has no tags).
+     *
+     * @param note parsed note
+     * @return fresh metadata instance to be extended per section
+     */
     private static Metadata baseMetadata(ObsidianNote note) {
         Metadata md = new Metadata()
                 .put(FILE_PATH, note.relativePath())

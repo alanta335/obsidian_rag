@@ -22,11 +22,25 @@ public class StatusController {
     private final VaultProperties props;
     private final ObjectMapper mapper;
 
+    /**
+     * Creates the controller.
+     *
+     * @param props  effective obsidian.rag.* configuration
+     * @param mapper Jackson 3 mapper for reading the index-state file
+     */
     public StatusController(VaultProperties props, ObjectMapper mapper) {
         this.props = props;
         this.mapper = mapper;
     }
 
+    /**
+     * Reports configuration plus indexing progress derived from the local state
+     * file. A corrupt or unreadable state file is treated as zero indexed notes
+     * rather than failing the request.
+     *
+     * @return status snapshot
+     * @throws IOException declared per signature; state-file errors are swallowed above
+     */
     @GetMapping
     public StatusResponse status() throws IOException {
         Path vault = Path.of(props.getVaultPath() == null ? "" : props.getVaultPath());

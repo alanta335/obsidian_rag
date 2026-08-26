@@ -44,6 +44,17 @@ public class RagService {
     private final FaithfulnessService faithfulness;
     private final VaultProperties props;
 
+    /**
+     * Creates the orchestration service.
+     *
+     * @param assistant           structured-output chat pipeline
+     * @param store               pgvector embedding store holding all indexed fragments
+     * @param queryEmbeddingModel query-mode embedding model; must NOT be swapped for
+     *                            the passage model (asymmetric NVIDIA embeddings)
+     * @param graph               link graph used for linked-context expansion
+     * @param faithfulness        citation validation and entailment judge
+     * @param props               vault/retrieval/faithfulness configuration
+     */
     public RagService(Assistant assistant,
                       EmbeddingStore<TextSegment> store,
                       @Qualifier("queryEmbeddingModel") EmbeddingModel queryEmbeddingModel,
@@ -58,6 +69,20 @@ public class RagService {
         this.props = props;
     }
 
+    /**
+     * Answers a question over the vault with grounded generation.
+     *
+     * <p>Pipeline: embed the question (query model) → vector search → refusal when
+     * fewer than {@code minResults} fragments pass {@code minScore} (the LLM is never
+     * called in that case) → optional linked-context expansion → structured
+     * {@link RagAnswer} → citation validation → optional faithfulness judging with at
+     * most one regeneration attempt. A regeneration replaces the original answer only
+     * when the judge finds strictly fewer unsupported claims (or flips to faithful).
+     *
+     * @param question user question; must not be blank
+     * @return response carrying the answer, faithfulness verdict, validated citations,
+     *         any unsupported claims, and the full source audit trail
+     */
     public ChatResponse chat(String question) {
         Embedding queryEmbedding = queryEmbeddingModel.embed(question).content();
 
@@ -128,6 +153,17 @@ public class RagService {
                 sources);
     }
 
+    /**
+     * Runs a raw similarity search without any LLM involvement.
+     *
+     * @param query    free-text query
+     * @param limit    maximum number of hits; capped at 50; falls back to the configured
+     *                 maxResults when null or non-positive
+     * @param minScore similarity floor; falls back to the configured value when null
+     * @param tag      optional tag filter (substring match against the tags_csv metadata)
+     * @param notePath optional vault-relative path filter; takes precedence over {@code tag}
+     * @return response with ranked fragments and snippets
+     */
     public SearchResponse search(String query, Integer limit, Double minScore, String tag, String notePath) {
         int effectiveLimit = limit != null && limit > 0 ? Math.min(limit, 50)
                 : props.getRetrieval().getMaxResults();
@@ -144,6 +180,13 @@ public class RagService {
         return new SearchResponse(query, items.size(), items);
     }
 
+    /**
+     * Builds the metadata filter for a search request.
+     *
+     * @param tag      optional tag filter
+     * @param notePath optional path filter; wins over {@code tag} when both are given
+     * @return a store filter, or null when neither parameter applies
+     */
     private Filter buildFilter(String tag, String notePath) {
         if (notePath != null && !notePath.isBlank()) {
             return MetadataFilterBuilder.metadataKey("file_path").isEqualTo(notePath);
@@ -158,6 +201,13 @@ public class RagService {
     /**
      * Pulls additional segments from notes that are strongly connected
      * (outgoing links / backlinks) to the hit notes.
+     *
+     * @param queryEmbedding embedded question, reused so linked notes are scored
+     *                       against the same intent as the primary hits
+     * @param primary        primary vector-search matches
+     * @param sources        audit-trail list; expanded fragments are appended here
+     *                       flagged as linked (mutated in place)
+     * @return extra matches from linked notes (may be empty)
      */
     private List<EmbeddingMatch<TextSegment>> expandLinkedContext(Embedding queryEmbedding,
                                                                   List<EmbeddingMatch<TextSegment>> primary,
@@ -186,6 +236,15 @@ public class RagService {
         return extra;
     }
 
+    /**
+     * Executes a vector search against the embedding store.
+     *
+     * @param queryEmbedding embedded query
+     * @param maxResults     upper bound on returned matches
+     * @param minScore       similarity threshold; matches below are dropped
+     * @param filter         optional metadata filter; null disables filtering
+     * @return matches ranked by descending score
+     */
     private List<EmbeddingMatch<TextSegment>> search(Embedding queryEmbedding, int maxResults,
                                                      double minScore, Filter filter) {
         EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
@@ -197,6 +256,12 @@ public class RagService {
         return store.search(request).matches();
     }
 
+    /**
+     * Concatenates fragments into the prompt context block, double-newline separated.
+     *
+     * @param fragments the exact fragments that will be sent to the model
+     * @return plain-text context
+     */
     private String buildContext(List<TextSegment> fragments) {
         StringBuilder sb = new StringBuilder();
         for (TextSegment fragment : fragments) {
@@ -205,6 +270,15 @@ public class RagService {
         return sb.toString();
     }
 
+    /**
+     * Maps an embedding match to its API source representation.
+     *
+     * @param match  store hit
+     * @param linked true when the fragment originates from linked-context expansion
+     *               rather than being a direct hit
+     * @return source item with a truncated, single-line snippet; chunkIndex is -1
+     *         when the metadata key is missing
+     */
     private SourceItem toSource(EmbeddingMatch<TextSegment> match, boolean linked) {
         TextSegment segment = match.embedded();
         Metadata md = segment.metadata();

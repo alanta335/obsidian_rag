@@ -36,16 +36,38 @@ public class FaithfulnessService {
     private final VaultProperties props;
     private final ObjectMapper mapper;
 
+    /**
+     * Creates the service.
+     *
+     * @param chatModel model used for the entailment-judge prompt
+     * @param props     faithfulness configuration flags
+     * @param mapper    Jackson 3 mapper for parsing the judge's JSON reply
+     */
     public FaithfulnessService(ChatModel chatModel, VaultProperties props, ObjectMapper mapper) {
         this.chatModel = chatModel;
         this.props = props;
         this.mapper = mapper;
     }
 
+    /**
+     * Outcome of the entailment judge.
+     *
+     * @param faithful          whether every claim in the answer is supported by the fragments
+     * @param unsupportedClaims verbatim claims the judge could not ground
+     * @param judgeError        true when the judge itself failed; {@code faithful} is
+     *                          then optimistically true so answers are not lost
+     */
     public record Verdict(boolean faithful, List<String> unsupportedClaims, boolean judgeError) {
     }
 
-    /** Keeps only citations whose (noteTitle, chunkIndex) exists in the sent fragments. */
+    /**
+     * Keeps only citations whose (noteTitle, chunkIndex) pair exists in the fragments
+     * actually sent to the model; duplicates collapse to the first occurrence.
+     *
+     * @param ragAnswer     structured model output (null-safe: yields an empty list)
+     * @param sentFragments fragments present in the prompt context
+     * @return citations that survived validation, in original order
+     */
     public List<Citation> validateCitations(RagAnswer ragAnswer, List<TextSegment> sentFragments) {
         Set<String> validKeys = sentFragments.stream()
                 .map(f -> key(titleOf(f), chunkIndexOf(f)))
@@ -73,6 +95,10 @@ public class FaithfulnessService {
     /**
      * LLM-as-judge: checks whether the answer is fully entailed by the
      * fragments. Optimistically returns faithful=true on judge failure.
+     *
+     * @param answer    generated answer text
+     * @param fragments fragments that were sent as context
+     * @return verdict with per-claim unsupported list; never throws
      */
     public Verdict judge(String answer, List<TextSegment> fragments) {
         String prompt = """
@@ -104,6 +130,13 @@ public class FaithfulnessService {
         }
     }
 
+    /**
+     * Renders numbered fragment previews (title › heading path, chunk index, capped
+     * text) for judge and citation prompts.
+     *
+     * @param fragments fragments included in the prompt context
+     * @return human-readable listing, one block per fragment
+     */
     static String renderFragments(List<TextSegment> fragments) {
         StringBuilder sb = new StringBuilder();
         int i = 1;
@@ -122,12 +155,24 @@ public class FaithfulnessService {
         return sb.toString();
     }
 
+    /**
+     * Flattens newlines and caps the text length for prompt previews.
+     *
+     * @param text fragment text
+     * @return cleaned text of at most 400 chars, with an ellipsis suffix when truncated
+     */
     private static String preview(String text) {
         String clean = text.replace('\n', ' ').trim();
         return clean.length() <= QUOTE_PREVIEW_CHARS ? clean
                 : clean.substring(0, QUOTE_PREVIEW_CHARS) + "...";
     }
 
+    /**
+     * Removes wrapping markdown code fences some models add despite instructions.
+     *
+     * @param raw judge response
+     * @return bare JSON text ready for parsing
+     */
     private static String stripFences(String raw) {
         String s = raw.trim();
         if (s.startsWith("```")) {
@@ -143,16 +188,35 @@ public class FaithfulnessService {
         return s.trim();
     }
 
+    /**
+     * Reads the fragment's note title with a "?" fallback so rendering never shows null.
+     *
+     * @param f fragment
+     * @return note_title metadata or "?"
+     */
     private static String titleOf(TextSegment f) {
         String t = f.metadata().getString("note_title");
         return t == null ? "?" : t;
     }
 
+    /**
+     * Reads the fragment's chunk index with a -1 fallback for missing metadata.
+     *
+     * @param f fragment
+     * @return chunk_index metadata or -1
+     */
     private static Integer chunkIndexOf(TextSegment f) {
         Integer idx = f.metadata().getInteger("chunk_index");
         return idx == null ? -1 : idx;
     }
 
+    /**
+     * Builds the (title, chunk) identity used to compare citations against sent fragments.
+     *
+     * @param title      note title, trimmed and lower-cased
+     * @param chunkIndex chunk index
+     * @return identity key of the form {@code "title#chunk"}
+     */
     private static String key(String title, Integer chunkIndex) {
         return title.trim().toLowerCase(Locale.ROOT) + "#" + chunkIndex;
     }

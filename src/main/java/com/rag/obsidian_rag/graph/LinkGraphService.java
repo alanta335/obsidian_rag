@@ -25,6 +25,12 @@ public class LinkGraphService {
     private volatile Map<String, Set<String>> outgoing = Map.of();
     private volatile Map<String, Set<String>> backlinks = Map.of();
 
+    /**
+     * Atomically rebuilds every graph map from the given notes. Alias entries are
+     * registered with putIfAbsent semantics so an alias can never shadow a real title.
+     *
+     * @param notes freshly parsed vault notes
+     */
     public synchronized void rebuild(Collection<ObsidianNote> notes) {
         Map<String, String> t2p = new HashMap<>();
         Map<String, String> n2t = new HashMap<>();
@@ -65,12 +71,22 @@ public class LinkGraphService {
         this.noteCount = notes.size();
     }
 
-    /** Resolves a wikilink target or alias to a vault-relative path, or null. */
+    /**
+     * Resolves a wikilink target or alias to a vault-relative path, or null.
+     *
+     * @param targetOrAlias raw link target (folder prefixes are stripped) or alias text
+     * @return vault-relative path, or null when nothing resolves
+     */
     public String resolvePath(String targetOrAlias) {
         return titleToPath.get(normalize(stripFolder(targetOrAlias)));
     }
 
-    /** Titles of notes linking TO the given note (normalized keys). */
+    /**
+     * Titles of notes linking TO the given note (normalized keys).
+     *
+     * @param noteTitle display title of the note whose backlinks are wanted
+     * @return backlink titles in normalized (lower-case) form; empty when none
+     */
     public Set<String> backlinkTitles(String noteTitle) {
         return backlinks.getOrDefault(normalize(noteTitle), Set.of());
     }
@@ -78,6 +94,10 @@ public class LinkGraphService {
     /**
      * Ranks notes connected to the hit notes (outgoing links + backlinks) by
      * connection frequency and returns up to {@code limit} candidate titles.
+     *
+     * @param hitTitles display titles of the primary retrieval hits
+     * @param limit     maximum number of candidates to return
+     * @return candidate display titles, highest connection count first, hits excluded
      */
     public List<String> expansionCandidates(Collection<String> hitTitles, int limit) {
         Map<String, Integer> score = new LinkedHashMap<>();
@@ -114,29 +134,65 @@ public class LinkGraphService {
         return result;
     }
 
+    /**
+     * Indicates whether any notes have been loaded into the graph.
+     *
+     * @return true only before the first successful {@link #rebuild}
+     */
     public boolean isEmpty() {
         return titleToPath.isEmpty();
     }
 
+    /**
+     * Number of notes known to the graph.
+     *
+     * @return note count from the last {@link #rebuild}; 0 beforehand
+     */
     public int noteCount() {
         return noteCount;
     }
 
     private volatile int noteCount = 0;
 
+    /**
+     * Increments the connection score for a candidate title.
+     *
+     * @param score mutable score map
+     * @param key   normalized title
+     */
     private static void merge(Map<String, Integer> score, String key) {
         score.merge(key, 1, Integer::sum);
     }
 
+    /**
+     * Removes any leading folder path from a wikilink target so links written as
+     * {@code folder/Note} resolve like bare titles.
+     *
+     * @param target raw link target
+     * @return text after the last '/' or '\', or the input when no separator exists
+     */
     private static String stripFolder(String target) {
         int slash = Math.max(target.lastIndexOf('/'), target.lastIndexOf('\\'));
         return slash >= 0 ? target.substring(slash + 1) : target;
     }
 
+    /**
+     * Canonical form used for all graph keys: trimmed and lower-cased.
+     *
+     * @param s raw title or alias; may be null
+     * @return normalized key, or the empty string for null input
+     */
     private static String normalize(String s) {
         return s == null ? "" : s.trim().toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Creates an immutable deep copy so published snapshots can never be mutated
+     * by a concurrent rebuild.
+     *
+     * @param src adjacency map to copy
+     * @return immutable copy safe for concurrent reads
+     */
     private static Map<String, Set<String>> deepCopy(Map<String, Set<String>> src) {
         Map<String, Set<String>> copy = new HashMap<>();
         src.forEach((k, v) -> copy.put(k, Set.copyOf(v)));

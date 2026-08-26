@@ -14,10 +14,22 @@ public class ChatController {
 
     private final RagService ragService;
 
+    /**
+     * Creates the controller.
+     *
+     * @param ragService RAG orchestration service
+     */
     public ChatController(RagService ragService) {
         this.ragService = ragService;
     }
 
+    /**
+     * Answers a question against the vault.
+     *
+     * @param request body carrying the non-blank question
+     * @return grounded answer with citations, faithfulness verdict and sources
+     * @throws IllegalArgumentException when the question is missing or blank (HTTP 400)
+     */
     @PostMapping
     public ChatResponse chat(@RequestBody ChatRequest request) {
         if (request.question() == null || request.question().isBlank()) {

@@ -11,6 +11,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MarkdownSectionSplitterTest {
 
+    /**
+     * Builds a minimal note for splitter tests.
+     *
+     * @param body note body text
+     * @return note titled "My Note" with ML/Rag tags and a fixed hash
+     */
     private ObsidianNote note(String body) {
         return new ObsidianNote("My Note", "notes/My Note.md", body, "abc123",
                 Map.of(), List.of("ML", "Rag"), List.of(), List.of());
@@ -81,6 +87,11 @@ class MarkdownSectionSplitterTest {
         assertEquals("Real", segments.get(0).metadata().getString("heading_path"));
     }
 
+    /**
+     * Local delegating wrapper for JUnit's assertFalse.
+     *
+     * @param condition condition expected to be false
+     */
     private static void assertFalse(boolean condition) {
         org.junit.jupiter.api.Assertions.assertFalse(condition);
     }

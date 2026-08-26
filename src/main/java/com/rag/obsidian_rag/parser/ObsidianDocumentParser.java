@@ -33,6 +33,15 @@ public class ObsidianDocumentParser {
     private static final Pattern INLINE_TAG = Pattern.compile("(?:^|[\\s(\\[{])#([A-Za-z][A-Za-z0-9_/-]*)");
     private static final Pattern HEADING_LINE = Pattern.compile("^#{1,6}\\s.*");
 
+    /**
+     * Parses a single markdown file into an {@link ObsidianNote}.
+     * A UTF-8 byte-order mark is stripped before processing.
+     *
+     * @param vaultRoot vault root; used only to compute the relative path
+     * @param file      markdown file to read
+     * @return parsed note with body, metadata, tags, aliases, links and content hash
+     * @throws IOException when the file cannot be read
+     */
     public ObsidianNote parse(Path vaultRoot, Path file) throws IOException {
         byte[] bytes = Files.readAllBytes(file);
         String hash = sha256(bytes);
@@ -59,6 +68,15 @@ public class ObsidianDocumentParser {
                 Map.copyOf(frontmatter), List.copyOf(tags), List.copyOf(aliases), List.copyOf(links));
     }
 
+    /**
+     * Removes a leading {@code ---} frontmatter block, parsing its flat key/value
+     * lines into {@code fm}. Notes without a well-formed frontmatter block are
+     * returned untouched.
+     *
+     * @param text full file content
+     * @param fm   map receiving frontmatter values (mutated in place)
+     * @return body with the frontmatter block removed
+     */
     private String stripFrontmatter(String text, Map<String, Object> fm) {
         String[] lines = text.split("\r?\n", -1);
         if (lines.length == 0 || !lines[0].trim().equals("---")) {
@@ -78,6 +96,16 @@ public class ObsidianDocumentParser {
         return String.join("\n", Arrays.copyOfRange(lines, close + 1, lines.length));
     }
 
+    /**
+     * Parses the supported frontmatter syntax between the given line indexes:
+     * flat keys, comma lists, flow lists {@code [a, b]} and {@code - item} blocks.
+     * Unsupported syntax (nested YAML, comments) is skipped silently.
+     *
+     * @param lines file lines
+     * @param start first frontmatter line (after the opening ---)
+     * @param end   index of the closing --- line (exclusive)
+     * @param fm    destination map (mutated in place)
+     */
     @SuppressWarnings("unchecked")
     private void parseFrontmatterLines(String[] lines, int start, int end, Map<String, Object> fm) {
         String currentKey = null;
@@ -114,6 +142,13 @@ public class ObsidianDocumentParser {
         }
     }
 
+    /**
+     * Normalizes an existing frontmatter value into a mutable list so scalar and
+     * list forms can both receive appended items.
+     *
+     * @param existing previously stored value (String, List or null)
+     * @return mutable list containing the prior value(s)
+     */
     @SuppressWarnings("unchecked")
     private List<String> asList(Object existing) {
         if (existing instanceof List<?> l) {
@@ -126,6 +161,13 @@ public class ObsidianDocumentParser {
         return list;
     }
 
+    /**
+     * Unwraps a YAML flow-list value {@code [a, b]} to its inner text so the shared
+     * comma-splitting logic can treat it like a comma list.
+     *
+     * @param value raw scalar value after ':'
+     * @return inner text when wrapped in brackets, otherwise the unchanged input
+     */
     private String stripFlowList(String value) {
         if (value.length() >= 2 && value.startsWith("[") && value.endsWith("]")) {
             return value.substring(1, value.length() - 1);
@@ -133,6 +175,12 @@ public class ObsidianDocumentParser {
         return value;
     }
 
+    /**
+     * Removes symmetric surrounding single/double quotes from a scalar value.
+     *
+     * @param value raw value
+     * @return unquoted value, or the input unchanged when not quoted
+     */
     private String stripQuotes(String value) {
         if (value.length() >= 2
                 && ((value.startsWith("\"") && value.endsWith("\""))
@@ -142,6 +190,14 @@ public class ObsidianDocumentParser {
         return value;
     }
 
+    /**
+     * Collects deduplicated tags from frontmatter ({@code tag}/{@code tags}) plus
+     * inline {@code #tags} found in the body. Headings and code fences never yield tags.
+     *
+     * @param body        note body without frontmatter
+     * @param frontmatter parsed frontmatter values
+     * @return tags in first-seen order
+     */
     private List<String> extractTags(String body, Map<String, Object> frontmatter) {
         LinkedHashSet<String> tags = new LinkedHashSet<>();
         collectStrings(frontmatter.get("tag"), tags::add);
@@ -165,6 +221,13 @@ public class ObsidianDocumentParser {
         return new ArrayList<>(tags);
     }
 
+    /**
+     * Feeds a scalar string, or every element of a list value, to the consumer,
+     * skipping null and blank items.
+     *
+     * @param value    frontmatter value (String, List or null)
+     * @param consumer receiver for each non-blank item
+     */
     @SuppressWarnings("unchecked")
     private void collectStrings(Object value, java.util.function.Consumer<String> consumer) {
         if (value instanceof String s) {
@@ -180,6 +243,12 @@ public class ObsidianDocumentParser {
         }
     }
 
+    /**
+     * Reads alias values from the frontmatter keys {@code alias}/{@code aliases}.
+     *
+     * @param frontmatter parsed frontmatter values
+     * @return deduplicated aliases in order of appearance
+     */
     private List<String> extractAliases(Map<String, Object> frontmatter) {
         LinkedHashSet<String> aliases = new LinkedHashSet<>();
         collectStrings(frontmatter.get("alias"), aliases::add);
@@ -187,6 +256,14 @@ public class ObsidianDocumentParser {
         return new ArrayList<>(aliases);
     }
 
+    /**
+     * Extracts [[wikilinks]] including their optional #anchor and |alias parts.
+     * Links inside code fences are ignored and duplicates collapse to the first
+     * occurrence in document order.
+     *
+     * @param body note body without frontmatter
+     * @return unique outgoing links
+     */
     private List<ObsidianNote.WikiLink> extractLinks(String body) {
         LinkedHashSet<String> seen = new LinkedHashSet<>();
         List<ObsidianNote.WikiLink> links = new ArrayList<>();
@@ -218,6 +295,14 @@ public class ObsidianDocumentParser {
         return links;
     }
 
+    /**
+     * Computes the lowercase hex SHA-256 of raw bytes; serves as the change
+     * detector for incremental indexing.
+     *
+     * @param bytes file content
+     * @return 64-character hex digest
+     * @throws IllegalStateException when the JVM lacks SHA-256 (never in practice)
+     */
     private String sha256(byte[] bytes) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");

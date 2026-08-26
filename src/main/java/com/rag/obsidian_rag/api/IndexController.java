@@ -15,6 +15,11 @@ public class IndexController {
 
     private final VaultIndexer indexer;
 
+    /**
+     * Creates the controller.
+     *
+     * @param indexer vault indexer
+     */
     public IndexController(VaultIndexer indexer) {
         this.indexer = indexer;
     }
@@ -22,6 +27,11 @@ public class IndexController {
     /**
      * Re-indexes the vault. Default is incremental (only new/changed/deleted
      * notes are processed); pass full=true to re-embed everything.
+     *
+     * @param full true to bypass content hashes and re-embed all notes
+     * @return run statistics
+     * @throws IllegalArgumentException when the vault path is unset or invalid (HTTP 400)
+     * @throws IOException              when the index state file cannot be written (HTTP 500)
      */
     @PostMapping
     public IndexResponse index(@RequestParam(defaultValue = "false") boolean full) throws IOException {

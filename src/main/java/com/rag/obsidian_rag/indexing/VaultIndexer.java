@@ -50,6 +50,15 @@ public class VaultIndexer {
     private final ObsidianDocumentParser parser = new ObsidianDocumentParser();
     private final ObjectMapper mapper;
 
+    /**
+     * Creates the indexer.
+     *
+     * @param props                 configuration (vault path, chunking, batch size, state file)
+     * @param store                 pgvector embedding store
+     * @param passageEmbeddingModel passage-mode embedding model used for indexing
+     * @param graph                 link graph rebuilt on every reindex run
+     * @param mapper                Jackson 3 mapper for the JSON state file
+     */
     public VaultIndexer(VaultProperties props,
                         EmbeddingStore<TextSegment> store,
                         @Qualifier("passageEmbeddingModel") EmbeddingModel passageEmbeddingModel,
@@ -62,6 +71,18 @@ public class VaultIndexer {
         this.mapper = mapper;
     }
 
+    /**
+     * Re-indexes the vault. Incremental mode skips notes whose SHA-256 matches the
+     * recorded hash, deletes stale vectors of changed/deleted notes before
+     * re-embedding, and persists the updated state afterwards. Full mode ignores
+     * prior state and re-embeds everything. The link graph is rebuilt even when no
+     * note changes; files that fail to parse are logged and skipped.
+     *
+     * @param full true to bypass hashes and re-embed every note
+     * @return statistics describing this run
+     * @throws IllegalArgumentException when the vault path is unset or not a directory
+     * @throws IOException             when the state file cannot be written
+     */
     public synchronized IndexStats reindex(boolean full) throws IOException {
         long start = System.currentTimeMillis();
 
@@ -113,6 +134,14 @@ public class VaultIndexer {
         return stats;
     }
 
+    /**
+     * Walks the vault and parses every visible .md file (hidden folders such as
+     * .obsidian/.trash are excluded). Unparsable files log a warning and are omitted.
+     *
+     * @param vault vault root directory
+     * @return notes keyed by relative path, in deterministic walk order
+     * @throws IOException when walking the tree fails
+     */
     private Map<String, ObsidianNote> loadNotes(Path vault) throws IOException {
         Map<String, ObsidianNote> notes = new LinkedHashMap<>();
         try (Stream<Path> stream = Files.walk(vault)) {
@@ -132,6 +161,13 @@ public class VaultIndexer {
         return notes;
     }
 
+    /**
+     * Removes vectors and state entries for notes that no longer exist on disk.
+     *
+     * @param state mutable incremental-index state (mutated: deleted entries removed)
+     * @param notes notes currently on disk keyed by relative path
+     * @return number of purged notes
+     */
     private int purgeDeletedNotes(Map<String, StateEntry> state, Map<String, ObsidianNote> notes) {
         int deleted = 0;
         Iterator<Map.Entry<String, StateEntry>> it = state.entrySet().iterator();
@@ -148,6 +184,11 @@ public class VaultIndexer {
         return deleted;
     }
 
+    /**
+     * Embeds segments in configured-size batches and inserts them with fresh UUIDs.
+     *
+     * @param segments chunks of a single note
+     */
     private void embedAndAdd(List<TextSegment> segments) {
         int batchSize = Math.max(1, props.getNvidia().getBatchSize());
         for (int i = 0; i < segments.size(); i += batchSize) {
@@ -160,6 +201,14 @@ public class VaultIndexer {
         }
     }
 
+    /**
+     * Checks whether any path component between the vault root and the file marks
+     * it hidden (dot-prefixed names, .obsidian, .trash).
+     *
+     * @param vault vault root
+     * @param file  candidate file below the root
+     * @return true when the file lives under a hidden component
+     */
     private boolean isHidden(Path vault, Path file) {
         for (Path part : vault.relativize(file)) {
             String name = part.toString();
@@ -170,12 +219,24 @@ public class VaultIndexer {
         return false;
     }
 
+    /**
+     * Resolves the state-file location, creating parent directories on demand.
+     *
+     * @return path of the incremental-index state file
+     * @throws IOException when parent directories cannot be created
+     */
     private Path stateFile() throws IOException {
         Path file = Path.of(props.getStateFile());
         Files.createDirectories(file.toAbsolutePath().getParent());
         return file;
     }
 
+    /**
+     * Loads the persisted per-note hashes. An unreadable state degrades to an
+     * empty map (forcing re-embedding) instead of failing the run.
+     *
+     * @return mutable state map keyed by vault-relative path
+     */
     private Map<String, StateEntry> loadState() {
         try {
             Path file = stateFile();
@@ -190,14 +251,37 @@ public class VaultIndexer {
         }
     }
 
+    /**
+     * Persists the incremental-index state for restart recovery.
+     *
+     * @param state state to persist
+     * @throws IOException when writing fails
+     */
     private void saveState(Map<String, StateEntry> state) throws IOException {
         mapper.writeValue(stateFile().toFile(), state);
     }
 
+    /**
+     * Summary counters for one reindex run.
+     *
+     * @param totalNotes       notes found on disk
+     * @param indexedNotes     notes (re-)embedded during the run
+     * @param skippedUnchanged notes skipped because their hash matched
+     * @param deletedNotes     notes purged because they no longer exist
+     * @param chunksIndexed    segments embedded during the run
+     * @param durationMs       wall-clock duration of the whole run in milliseconds
+     */
     public record IndexStats(int totalNotes, int indexedNotes, int skippedUnchanged,
                              int deletedNotes, int chunksIndexed, long durationMs) {
     }
 
+    /**
+     * Persisted per-note index state.
+     *
+     * @param hash      SHA-256 of the raw file bytes at index time
+     * @param title     note title at index time
+     * @param indexedAt ISO-8601 instant of the last indexing
+     */
     public record StateEntry(String hash, String title, String indexedAt) {
     }
 }

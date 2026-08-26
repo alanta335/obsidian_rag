@@ -12,6 +12,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LinkGraphServiceTest {
 
+    /**
+     * Creates a note stub with outgoing wikilinks for graph tests.
+     *
+     * @param title       note title
+     * @param path        vault-relative path
+     * @param aliases     frontmatter aliases
+     * @param linkTargets plain wikilink targets (no anchors or aliases)
+     * @return parsed-note stub
+     */
     private ObsidianNote note(String title, String path, List<String> aliases, String... linkTargets) {
         List<ObsidianNote.WikiLink> links = java.util.Arrays.stream(linkTargets)
                 .map(t -> new ObsidianNote.WikiLink(t, null, null))
