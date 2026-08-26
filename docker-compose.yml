@@ -1,17 +1,20 @@
+# Values are substituted from ./.env (loaded by Docker Compose automatically),
+# falling back to the defaults below.
 services:
   db:
     image: pgvector/pgvector:pg16
     container_name: obsidian_rag_db
     environment:
-      POSTGRES_DB: obsidian_rag
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-obsidian_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
-      - "5433:5432"
+      # Host port must match POSTGRES_PORT used by application.yaml (default 5433).
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d obsidian_rag"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-obsidian_rag}"]
       interval: 5s
       timeout: 3s
       retries: 10
