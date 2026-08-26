@@ -33,6 +33,7 @@ Runtime env vars required by the app: `NVIDIA_API_KEY` (fail-fast at startup if 
 ## Documentation
 
 - Every method (public, protected, and private) must have a JavaDoc comment. Include `@param`, `@return`, and `@throws` tags where applicable; describe non-obvious behavior, not the obvious.
+- Whenever a method is created or modified, its JavaDoc must be updated in the same change to accurately reflect the new signature and behavior — never leave stale documentation behind.
 
 ## Testing constraints
 
