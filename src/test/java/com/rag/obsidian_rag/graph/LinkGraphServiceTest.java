@@ -1,0 +1,69 @@
+package com.rag.obsidian_rag.graph;
+
+import com.rag.obsidian_rag.parser.ObsidianNote;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class LinkGraphServiceTest {
+
+    private ObsidianNote note(String title, String path, List<String> aliases, String... linkTargets) {
+        List<ObsidianNote.WikiLink> links = java.util.Arrays.stream(linkTargets)
+                .map(t -> new ObsidianNote.WikiLink(t, null, null))
+                .toList();
+        return new ObsidianNote(title, path, "", "h", Map.of(), List.of(), aliases, links);
+    }
+
+    @Test
+    void resolvesTitlesFoldersAndAliases() {
+        LinkGraphService graph = new LinkGraphService();
+        graph.rebuild(List.of(
+                note("Zettelkasten", "methods/zk.md", List.of("ZK")),
+                note("Daily", "daily/2024-01-01.md", List.of()),
+                note("Rag", "concepts/rag.md", List.of())
+        ));
+
+        assertEquals("methods/zk.md", graph.resolvePath("zettelkasten"));
+        assertEquals("daily/2024-01-01.md", graph.resolvePath("Daily"));
+        assertEquals("methods/zk.md", graph.resolvePath("ZK"));
+        assertNull(graph.resolvePath("Unknown"));
+    }
+
+    @Test
+    void backlinksPointFromSourceToTarget() {
+        LinkGraphService graph = new LinkGraphService();
+        graph.rebuild(List.of(
+                note("A", "a.md", List.of(), "B"),
+                note("B", "b.md", List.of(), "A"),
+                note("C", "c.md", List.of(), "B")
+        ));
+
+        var backlinksOfB = graph.backlinkTitles("B");
+        assertTrue(backlinksOfB.contains("a"));
+        assertTrue(backlinksOfB.contains("c"));
+        assertEquals(2, backlinksOfB.size());
+    }
+
+    @Test
+    void expansionCandidatesRankByConnectionsAndExcludeHits() {
+        LinkGraphService graph = new LinkGraphService();
+        graph.rebuild(List.of(
+                note("Hub", "hub.md", List.of(), "A", "B"),
+                note("A", "a.md", List.of(), "Hub"),
+                note("B", "b.md", List.of())
+        ));
+
+        // Query hits Hub: A connects twice (outgoing of hub + backlink source), B once
+        List<String> candidates = graph.expansionCandidates(List.of("Hub"), 5);
+        assertEquals(List.of("A", "B"), candidates);
+
+        // limit respected
+        List<String> limited = graph.expansionCandidates(List.of("Hub"), 1);
+        assertEquals(List.of("A"), limited);
+    }
+}

@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: obsidian_rag
+
+server:
+  port: 8080
+
+obsidian:
+  rag:
+    # Path to your Obsidian vault root (set via env var, e.g. D:/Notes/MyVault)
+    vault-path: ${OBSIDIAN_VAULT_PATH:}
+    chunk-size: 1500
+    chunk-overlap: 200
+    state-file: ./data/index-state.json
+
+    nvidia:
+      base-url: https://integrate.api.nvidia.com/v1
+      chat-model: deepseek-ai/deepseek-v4-flash-0731
+      embedding-model: nvidia/nv-embedqa-e5-v5
+      embedding-dimension: 1024
+      batch-size: 16
+      temperature: 0.2
+      max-tokens: 4096
+
+    retrieval:
+      max-results: 6
+      min-score: 0.55
+      min-results: 1
+      expand-linked-context: true
+      linked-min-score: 0.30
+      linked-max-notes: 3
+
+    faithfulness:
+      verify: true
+      regenerate-if-unfaithful: true
+
+    store:
+      host: localhost
+      port: 5433
+      database: obsidian_rag
+      user: postgres
+      password: postgres
+      table: obsidian_segments
+
+logging:
+  level:
+    com.rag.obsidian_rag: INFO
