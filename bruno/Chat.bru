@@ -1,0 +1,21 @@
+meta {
+  name: Chat
+  id: chat
+  type: http
+}
+
+post {
+  url: {{baseUrl}}/api/chat
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "question": "{{question}}"
+  }
+}
+
+vars {
+  question: Summarize my notes on this topic
+}

@@ -21,7 +21,7 @@ obsidian:
       api-key: ${NVIDIA_API_KEY:}
       base-url: https://integrate.api.nvidia.com/v1
       chat-model: deepseek-ai/deepseek-v4-flash-0731
-      embedding-model: nvidia/nv-embedqa-e5-v5
+      embedding-model: nvidia/nemotron-3-embed-1b
       embedding-dimension: 1024
       batch-size: 16
       temperature: 0.2

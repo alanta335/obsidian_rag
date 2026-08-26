@@ -1,0 +1,17 @@
+meta {
+  name: Search (note filter + minScore)
+  id: search-note-minscore
+  type: http
+}
+
+get {
+  url: {{baseUrl}}/api/search?q={{query}}&note={{note}}&minScore={{minScore}}&limit=10
+  body: none
+  auth: none
+}
+
+vars {
+  query: what is this vault about
+  note: folder/my-note.md
+  minScore: 0.5
+}

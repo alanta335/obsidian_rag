@@ -1,0 +1,15 @@
+meta {
+  name: Search
+  id: search
+  type: http
+}
+
+get {
+  url: {{baseUrl}}/api/search?q={{query}}&limit=5&minScore=&tag=&note=
+  body: none
+  auth: none
+}
+
+vars {
+  query: what is this vault about
+}

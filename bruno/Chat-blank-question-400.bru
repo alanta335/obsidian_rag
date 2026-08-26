@@ -1,0 +1,21 @@
+meta {
+  name: Chat (blank question -> 400)
+  id: chat-blank-400
+  type: http
+}
+
+post {
+  url: {{baseUrl}}/api/chat
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "question": ""
+  }
+}
+
+tests {
+  expect(res.getStatus()).to.equal(400);
+}

@@ -1,0 +1,16 @@
+meta {
+  name: Search (tag filter)
+  id: search-tag
+  type: http
+}
+
+get {
+  url: {{baseUrl}}/api/search?q={{query}}&tag={{tag}}
+  body: none
+  auth: none
+}
+
+vars {
+  query: what is this vault about
+  tag: project
+}

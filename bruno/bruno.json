@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "name": "obsidian_rag",
+  "type": "collection",
+  "ignore": ["node_modules", ".git"]
+}
