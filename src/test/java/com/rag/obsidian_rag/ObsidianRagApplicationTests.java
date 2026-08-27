@@ -30,8 +30,8 @@ class ObsidianRagApplicationTests {
             assertThat(props.getChunkSize()).isEqualTo(1500);
             assertThat(props.getChunkOverlap()).isEqualTo(200);
             assertThat(props.getNvidia().getBaseUrl()).isEqualTo("https://integrate.api.nvidia.com/v1");
-            assertThat(props.getNvidia().getEmbeddingModel()).isEqualTo("nvidia/nv-embedqa-e5-v5");
-            assertThat(props.getNvidia().getEmbeddingDimension()).isEqualTo(1024);
+            assertThat(props.getNvidia().getEmbeddingModel()).isEqualTo("nvidia/nemotron-3-embed-1b");
+            assertThat(props.getNvidia().getEmbeddingDimension()).isEqualTo(2048);
             assertThat(props.getRetrieval().getMinScore()).isEqualTo(0.55);
             assertThat(props.getFaithfulness().isVerify()).isTrue();
             assertThat(props.getStore().getPort()).isEqualTo(5433);
