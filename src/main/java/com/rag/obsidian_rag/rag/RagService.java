@@ -15,8 +15,8 @@ import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.filter.Filter;
 import dev.langchain4j.store.embedding.filter.MetadataFilterBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
@@ -31,10 +31,10 @@ import java.util.Set;
  * RetrievalAugmentor) so that exactly the fragments sent to the model are
  * known and auditable.
  */
+@Slf4j
 @Service
 public class RagService {
 
-    private static final Logger log = LoggerFactory.getLogger(RagService.class);
     private static final int SNIPPET_CHARS = 200;
 
     private final Assistant assistant;
@@ -81,7 +81,7 @@ public class RagService {
      *
      * @param question user question; must not be blank
      * @return response carrying the answer, faithfulness verdict, validated citations,
-     *         any unsupported claims, and the full source audit trail
+     * any unsupported claims, and the full source audit trail
      */
     public ChatResponse chat(String question) {
         Embedding queryEmbedding = queryEmbeddingModel.embed(question).content();
@@ -164,18 +164,19 @@ public class RagService {
      * @param notePath optional vault-relative path filter; takes precedence over {@code tag}
      * @return response with ranked fragments and snippets
      */
-    public SearchResponse search(String query, Integer limit, Double minScore, String tag, String notePath) {
-        int effectiveLimit = limit != null && limit > 0 ? Math.min(limit, 50)
+    public SearchResponse search(final String query, final Integer limit, final Double minScore,
+                                 final String tag, final String notePath) {
+        final int effectiveLimit = limit != null && limit > 0 ? Math.min(limit, 50)
                 : props.getRetrieval().getMaxResults();
-        double effectiveMinScore = minScore != null ? minScore : props.getRetrieval().getMinScore();
+        final double effectiveMinScore = minScore != null ? minScore : props.getRetrieval().getMinScore();
 
-        Filter filter = buildFilter(tag, notePath);
-        Embedding queryEmbedding = queryEmbeddingModel.embed(query).content();
-        List<EmbeddingMatch<TextSegment>> matches =
+        final Filter filter = buildFilter(tag, notePath);
+        final Embedding queryEmbedding = queryEmbeddingModel.embed(query).content();
+        final List<EmbeddingMatch<TextSegment>> matches =
                 search(queryEmbedding, effectiveLimit, effectiveMinScore, filter);
 
         List<SourceItem> items = matches.stream()
-                .map(m -> toSource(m, false))
+                .map(embeddingMatch -> toSource(embeddingMatch, false))
                 .toList();
         return new SearchResponse(query, items.size(), items);
     }
@@ -188,10 +189,10 @@ public class RagService {
      * @return a store filter, or null when neither parameter applies
      */
     private Filter buildFilter(String tag, String notePath) {
-        if (notePath != null && !notePath.isBlank()) {
+        if (StringUtils.isNotBlank(notePath)) {
             return MetadataFilterBuilder.metadataKey("file_path").isEqualTo(notePath);
         }
-        if (tag != null && !tag.isBlank()) {
+        if (StringUtils.isNotBlank(tag)) {
             return MetadataFilterBuilder.metadataKey("tags_csv").containsString(
                     tag.trim().toLowerCase());
         }
@@ -245,9 +246,9 @@ public class RagService {
      * @param filter         optional metadata filter; null disables filtering
      * @return matches ranked by descending score
      */
-    private List<EmbeddingMatch<TextSegment>> search(Embedding queryEmbedding, int maxResults,
-                                                     double minScore, Filter filter) {
-        EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
+    private List<EmbeddingMatch<TextSegment>> search(final Embedding queryEmbedding, final int maxResults,
+                                                     final double minScore, final Filter filter) {
+        final EmbeddingSearchRequest request = EmbeddingSearchRequest.builder()
                 .queryEmbedding(queryEmbedding)
                 .maxResults(maxResults)
                 .minScore(minScore)
@@ -277,20 +278,19 @@ public class RagService {
      * @param linked true when the fragment originates from linked-context expansion
      *               rather than being a direct hit
      * @return source item with a truncated, single-line snippet; chunkIndex is -1
-     *         when the metadata key is missing
+     * when the metadata key is missing
      */
-    private SourceItem toSource(EmbeddingMatch<TextSegment> match, boolean linked) {
-        TextSegment segment = match.embedded();
-        Metadata md = segment.metadata();
-        String text = segment.text();
-        String snippet = text.length() <= SNIPPET_CHARS ? text : text.substring(0, SNIPPET_CHARS) + "...";
-        Integer chunkIndex = md.getInteger("chunk_index");
+    private SourceItem toSource(final EmbeddingMatch<TextSegment> match, final boolean linked) {
+        final TextSegment segment = match.embedded();
+        final Metadata md = segment.metadata();
+        final String text = segment.text();
+        final Integer chunkIndex = md.getInteger("chunk_index");
         return new SourceItem(
                 md.getString("note_title"),
                 md.getString("file_path"),
                 chunkIndex == null ? -1 : chunkIndex,
                 match.score(),
                 linked,
-                snippet.replace('\n', ' '));
+                text.replace('\n', ' '));
     }
 }
