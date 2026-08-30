@@ -1,7 +1,5 @@
 package com.rag.obsidian_rag.rag;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import com.rag.obsidian_rag.config.VaultProperties;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
@@ -9,12 +7,12 @@ import dev.langchain4j.model.chat.ChatModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Post-generation faithfulness layer:
@@ -68,28 +66,36 @@ public class FaithfulnessService {
      * @param sentFragments fragments present in the prompt context
      * @return citations that survived validation, in original order
      */
-    public List<Citation> validateCitations(RagAnswer ragAnswer, List<TextSegment> sentFragments) {
-        Set<String> validKeys = sentFragments.stream()
-                .map(f -> key(titleOf(f), chunkIndexOf(f)))
-                .collect(java.util.stream.Collectors.toSet());
+    public List<Citation> validateCitations(final RagAnswer ragAnswer, final List<TextSegment> sentFragments) {
+        final Set<String> validKeys = sentFragments.stream()
+                .map(textSegment -> key(titleOf(textSegment), chunkIndexOf(textSegment)))
+                .collect(Collectors.toSet());
 
-        LinkedHashMap<String, Citation> kept = new LinkedHashMap<>();
-        if (ragAnswer == null || ragAnswer.getCitations() == null) {
-            return List.of();
-        }
-        for (Citation c : ragAnswer.getCitations()) {
-            if (c == null || c.getNoteTitle() == null || c.getNoteTitle().isBlank()
-                    || c.getChunkIndex() == null) {
-                continue;
-            }
-            String k = key(c.getNoteTitle(), c.getChunkIndex());
-            if (validKeys.contains(k)) {
-                kept.putIfAbsent(k, c);
-            } else {
-                log.debug("Dropped fabricated citation {}#{}", c.getNoteTitle(), c.getChunkIndex());
-            }
-        }
-        return new ArrayList<>(kept.values());
+        return ragAnswer.getCitations().stream()
+                .filter(Objects::nonNull)
+                .filter(citation -> citation.getNoteTitle() != null &&
+                        !citation.getNoteTitle().isBlank() &&
+                        citation.getChunkIndex() != null)
+                .filter(citation -> {
+                    final String k = key(citation.getNoteTitle(), citation.getChunkIndex());
+
+                    if (!validKeys.contains(k)) {
+                        log.debug(
+                                "Dropped fabricated citation {}#{}",
+                                citation.getNoteTitle(),
+                                citation.getChunkIndex()
+                        );
+                        return false;
+                    }
+
+                    return true;
+                })
+                .collect(Collectors.toMap(
+                        citation -> key(citation.getNoteTitle(), citation.getChunkIndex()),
+                        Function.identity(),
+                        (existing, replacement) -> existing,
+                        LinkedHashMap::new
+                )).values().stream().toList();
     }
 
     /**
@@ -104,16 +110,16 @@ public class FaithfulnessService {
         String prompt = """
                 You are a strict fact-checking judge. Determine whether the ANSWER below is fully \
                 supported by the SOURCE FRAGMENTS from a personal notes vault.
-
+                
                 Respond with ONLY a JSON object, no markdown fences and no extra text:
                 {"faithful": true, "unsupported_claims": []}
-
+                
                 A claim is unsupported unless some fragment explicitly entails it. List each \
                 unsupported claim verbatim.
-
+                
                 SOURCE FRAGMENTS:
                 %s
-
+                
                 ANSWER:
                 %s""".formatted(renderFragments(fragments), answer);
 
@@ -194,19 +200,19 @@ public class FaithfulnessService {
      * @param f fragment
      * @return note_title metadata or "?"
      */
-    private static String titleOf(TextSegment f) {
-        String t = f.metadata().getString("note_title");
+    private static String titleOf(final TextSegment f) {
+        final String t = f.metadata().getString("note_title");
         return t == null ? "?" : t;
     }
 
     /**
      * Reads the fragment's chunk index with a -1 fallback for missing metadata.
      *
-     * @param f fragment
+     * @param textSegment fragment
      * @return chunk_index metadata or -1
      */
-    private static Integer chunkIndexOf(TextSegment f) {
-        Integer idx = f.metadata().getInteger("chunk_index");
+    private static Integer chunkIndexOf(final TextSegment textSegment) {
+        final Integer idx = textSegment.metadata().getInteger("chunk_index");
         return idx == null ? -1 : idx;
     }
 
@@ -217,11 +223,13 @@ public class FaithfulnessService {
      * @param chunkIndex chunk index
      * @return identity key of the form {@code "title#chunk"}
      */
-    private static String key(String title, Integer chunkIndex) {
+    private String key(String title, Integer chunkIndex) {
         return title.trim().toLowerCase(Locale.ROOT) + "#" + chunkIndex;
     }
 
-    /** Alias constants kept local to avoid a dependency on the parser package. */
+    /**
+     * Alias constants kept local to avoid a dependency on the parser package.
+     */
     private static final class MarkdownHeading {
         static final String HEADING_PATH = "heading_path";
     }

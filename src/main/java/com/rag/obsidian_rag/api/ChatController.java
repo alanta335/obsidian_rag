@@ -3,6 +3,7 @@ package com.rag.obsidian_rag.api;
 import com.rag.obsidian_rag.api.dto.ChatRequest;
 import com.rag.obsidian_rag.api.dto.ChatResponse;
 import com.rag.obsidian_rag.rag.RagService;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,7 +33,7 @@ public class ChatController {
      */
     @PostMapping
     public ChatResponse chat(@RequestBody ChatRequest request) {
-        if (request.question() == null || request.question().isBlank()) {
+        if (StringUtils.isNotBlank(request.question())) {
             throw new IllegalArgumentException("Field 'question' is required and must not be blank");
         }
         return ragService.chat(request.question());

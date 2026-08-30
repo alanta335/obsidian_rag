@@ -21,9 +21,11 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Orchestrates retrieval, grounded generation, citation validation and the
@@ -83,15 +85,15 @@ public class RagService {
      * @return response carrying the answer, faithfulness verdict, validated citations,
      * any unsupported claims, and the full source audit trail
      */
-    public ChatResponse chat(String question) {
-        Embedding queryEmbedding = queryEmbeddingModel.embed(question).content();
+    public ChatResponse chat(final String question) {
+        final Embedding queryEmbedding = queryEmbeddingModel.embed(question).content();
 
-        var retrieval = props.getRetrieval();
+        final var retrieval = props.getRetrieval();
         List<EmbeddingMatch<TextSegment>> primary =
                 search(queryEmbedding, retrieval.getMaxResults(), retrieval.getMinScore(), null);
 
-        List<SourceItem> sources = new ArrayList<>();
-        primary.forEach(m -> sources.add(toSource(m, false)));
+        final List<SourceItem> sources = primary.stream().map(embeddingMatch ->
+                toSource(embeddingMatch, false)).toList();
 
         if (primary.size() < retrieval.getMinResults()) {
             log.info("Refusing question (only {} fragments above minScore)", primary.size());
@@ -105,11 +107,12 @@ public class RagService {
             linked = expandLinkedContext(queryEmbedding, primary, sources);
         }
 
-        List<TextSegment> sentFragments = new ArrayList<>();
-        primary.forEach(m -> sentFragments.add(m.embedded()));
-        linked.forEach(m -> sentFragments.add(m.embedded()));
-
-        String context = buildContext(sentFragments);
+        final List<TextSegment> sentFragments = Stream.concat(
+                        primary.stream(),
+                        linked.stream()
+                ).map(EmbeddingMatch::embedded)
+                .toList();
+        final String context = buildContext(sentFragments);
         RagAnswer ragAnswer = assistant.answer(question, context);
 
         List<Citation> citations = faithfulness.validateCitations(ragAnswer, sentFragments);
@@ -210,30 +213,35 @@ public class RagService {
      *                       flagged as linked (mutated in place)
      * @return extra matches from linked notes (may be empty)
      */
-    private List<EmbeddingMatch<TextSegment>> expandLinkedContext(Embedding queryEmbedding,
-                                                                  List<EmbeddingMatch<TextSegment>> primary,
-                                                                  List<SourceItem> sources) {
-        Set<String> hitTitles = new LinkedHashSet<>();
-        primary.forEach(m -> hitTitles.add(m.embedded().metadata().getString("note_title")));
+    private List<EmbeddingMatch<TextSegment>> expandLinkedContext(final Embedding queryEmbedding,
+                                                                  final List<EmbeddingMatch<TextSegment>> primary,
+                                                                  final List<SourceItem> sources) {
+        final Set<String> hitTitles = primary.stream().map(
+                m -> m.embedded().metadata()
+                        .getString("note_title")).collect(Collectors.toSet());
 
-        var retrieval = props.getRetrieval();
-        List<String> candidates = graph.expansionCandidates(hitTitles, retrieval.getLinkedMaxNotes());
+        final var retrieval = props.getRetrieval();
+        final List<String> candidates = graph.expansionCandidates(hitTitles, retrieval.getLinkedMaxNotes());
 
-        List<EmbeddingMatch<TextSegment>> extra = new ArrayList<>();
-        for (String candidate : candidates) {
-            String path = graph.resolvePath(candidate);
-            if (path == null) {
-                continue;
-            }
-            Filter filter = MetadataFilterBuilder.metadataKey("file_path").isEqualTo(path);
-            List<EmbeddingMatch<TextSegment>> found =
-                    search(queryEmbedding, retrieval.getLinkedSegmentsPerNote(),
-                            retrieval.getLinkedMinScore(), filter);
-            found.forEach(m -> {
-                extra.add(m);
-                sources.add(toSource(m, true));
-            });
-        }
+        final List<EmbeddingMatch<TextSegment>> extra = new ArrayList<>();
+
+        candidates.stream()
+                .map(graph::resolvePath)
+                .filter(Objects::nonNull)
+                .flatMap(path -> {
+                    final Filter filter =
+                            MetadataFilterBuilder.metadataKey("file_path").isEqualTo(path);
+                    return search(
+                            queryEmbedding,
+                            retrieval.getLinkedSegmentsPerNote(),
+                            retrieval.getLinkedMinScore(),
+                            filter
+                    ).stream();
+                })
+                .forEach(embeddingMatch -> {
+                    extra.add(embeddingMatch);
+                    sources.add(toSource(embeddingMatch, true));
+                });
         return extra;
     }
 
@@ -263,8 +271,8 @@ public class RagService {
      * @param fragments the exact fragments that will be sent to the model
      * @return plain-text context
      */
-    private String buildContext(List<TextSegment> fragments) {
-        StringBuilder sb = new StringBuilder();
+    private String buildContext(final List<TextSegment> fragments) {
+        final StringBuilder sb = new StringBuilder();
         for (TextSegment fragment : fragments) {
             sb.append(fragment.text()).append("\n\n");
         }

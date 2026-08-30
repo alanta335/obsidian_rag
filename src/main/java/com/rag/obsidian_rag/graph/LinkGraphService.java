@@ -3,15 +3,7 @@ package com.rag.obsidian_rag.graph;
 import com.rag.obsidian_rag.parser.ObsidianNote;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 /**
  * In-memory link graph over the vault: title/alias resolution, backlinks,
@@ -99,7 +91,7 @@ public class LinkGraphService {
      * @param limit     maximum number of candidates to return
      * @return candidate display titles, highest connection count first, hits excluded
      */
-    public List<String> expansionCandidates(Collection<String> hitTitles, int limit) {
+    public List<String> expansionCandidates(final Collection<String> hitTitles, final int limit) {
         Map<String, Integer> score = new LinkedHashMap<>();
         Set<String> hits = new LinkedHashSet<>();
         for (String title : hitTitles) {
