@@ -28,6 +28,18 @@ class LinkGraphServiceTest {
         return new ObsidianNote(title, path, "", "h", Map.of(), List.of(), aliases, links);
     }
 
+    /**
+     * Creates a note stub with explicitly typed wikilinks for weighted-scoring tests.
+     *
+     * @param title note title
+     * @param path  vault-relative path
+     * @param links typed wikilinks
+     * @return parsed-note stub
+     */
+    private ObsidianNote noteWithLinks(String title, String path, ObsidianNote.WikiLink... links) {
+        return new ObsidianNote(title, path, "", "h", Map.of(), List.of(), List.of(), List.of(links));
+    }
+
     @Test
     void resolvesTitlesFoldersAndAliases() {
         LinkGraphService graph = new LinkGraphService();
@@ -74,5 +86,26 @@ class LinkGraphServiceTest {
         // limit respected
         List<String> limited = graph.expansionCandidates(List.of("Hub"), 1);
         assertEquals(List.of("A"), limited);
+    }
+
+    @Test
+    void expansionCandidatesWeightByLinkType() {
+        LinkGraphService graph = new LinkGraphService();
+        graph.rebuild(List.of(
+                noteWithLinks("Hub", "hub.md",
+                        new ObsidianNote.WikiLink("A", null, null, ObsidianNote.LinkType.BODY),
+                        new ObsidianNote.WikiLink("B", null, null, ObsidianNote.LinkType.FOOTER),
+                        new ObsidianNote.WikiLink("C", null, null, ObsidianNote.LinkType.FRONTMATTER)),
+                noteWithLinks("A", "a.md",
+                        new ObsidianNote.WikiLink("Hub", null, null, ObsidianNote.LinkType.BODY)),
+                noteWithLinks("B", "b.md",
+                        new ObsidianNote.WikiLink("Hub", null, null, ObsidianNote.LinkType.FOOTER)),
+                noteWithLinks("C", "c.md",
+                        new ObsidianNote.WikiLink("Hub", null, null, ObsidianNote.LinkType.FRONTMATTER))
+        ));
+
+        // A: 1.0 (out) + 1.0 (backlink) = 2.0; B: 0.5 + 0.5 = 1.0; C: 0.25 + 0.25 = 0.5
+        List<String> candidates = graph.expansionCandidates(List.of("Hub"), 3);
+        assertEquals(List.of("A", "B", "C"), candidates);
     }
 }

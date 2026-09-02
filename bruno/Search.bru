@@ -5,11 +5,15 @@ meta {
 }
 
 get {
-  url: {{baseUrl}}/api/search?q={{query}}&limit=5&minScore=&tag=&note=
+  url: {{baseUrl}}/api/search?q={{query}}&limit=5
   body: none
   auth: none
 }
 
 vars {
   query: what is this vault about
+}
+
+assert {
+  res.status: 200
 }

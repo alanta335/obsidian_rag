@@ -34,7 +34,7 @@ public class VaultProperties {
         /** NVIDIA API key; resolved from {@code NVIDIA_API_KEY} (env var or .env). Blank fails fast at startup. */
         private String apiKey = "";
         private String baseUrl = "https://integrate.api.nvidia.com/v1";
-        private String chatModel = "nvidia/nemotron-3-nano-30b-a3b";
+        private String chatModel = "nvidia/nemotron-nano-3-30b-a3b";
         private String embeddingModel = "nvidia/nemotron-3-embed-1b";
         private int embeddingDimension = 2048;
         private int batchSize = 16;

@@ -33,7 +33,7 @@ public class ChatController {
      */
     @PostMapping
     public ChatResponse chat(@RequestBody ChatRequest request) {
-        if (StringUtils.isNotBlank(request.question())) {
+        if (StringUtils.isBlank(request.question())) {
             throw new IllegalArgumentException("Field 'question' is required and must not be blank");
         }
         return ragService.chat(request.question());

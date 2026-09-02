@@ -16,6 +16,15 @@ public class LinkGraphService {
     private volatile Map<String, String> normalizedToTitle = Map.of();
     private volatile Map<String, Set<String>> outgoing = Map.of();
     private volatile Map<String, Set<String>> backlinks = Map.of();
+    private volatile Map<String, Map<String, Double>> linkWeights = Map.of();
+
+    /**
+     * Connection weight per link type: a body link is the strongest signal, a
+     * footer or frontmatter link a weaker one.
+     */
+    private static final double BODY_WEIGHT = 1.0;
+    private static final double FOOTER_WEIGHT = 0.5;
+    private static final double FRONTMATTER_WEIGHT = 0.25;
 
     /**
      * Atomically rebuilds every graph map from the given notes. Alias entries are
@@ -43,6 +52,7 @@ public class LinkGraphService {
 
         Map<String, Set<String>> out = new HashMap<>();
         Map<String, Set<String>> bl = new HashMap<>();
+        Map<String, Map<String, Double>> weights = new HashMap<>();
 
         for (ObsidianNote note : notes) {
             String sourceNorm = normalize(note.noteTitle());
@@ -53,6 +63,8 @@ public class LinkGraphService {
                 }
                 out.computeIfAbsent(sourceNorm, k -> new LinkedHashSet<>()).add(targetNorm);
                 bl.computeIfAbsent(targetNorm, k -> new LinkedHashSet<>()).add(sourceNorm);
+                weights.computeIfAbsent(sourceNorm, k -> new HashMap<>())
+                        .merge(targetNorm, weight(link.type()), Double::sum);
             }
         }
 
@@ -60,6 +72,7 @@ public class LinkGraphService {
         this.normalizedToTitle = Map.copyOf(n2t);
         this.outgoing = deepCopy(out);
         this.backlinks = deepCopy(bl);
+        this.linkWeights = deepCopyWeights(weights);
         this.noteCount = notes.size();
     }
 
@@ -85,14 +98,16 @@ public class LinkGraphService {
 
     /**
      * Ranks notes connected to the hit notes (outgoing links + backlinks) by
-     * connection frequency and returns up to {@code limit} candidate titles.
+     * weighted connection frequency and returns up to {@code limit} candidate
+     * titles. Each connection contributes the weight of its link type (body
+     * links count more than footer or frontmatter links).
      *
      * @param hitTitles display titles of the primary retrieval hits
      * @param limit     maximum number of candidates to return
-     * @return candidate display titles, highest connection count first, hits excluded
+     * @return candidate display titles, highest weighted connection count first, hits excluded
      */
     public List<String> expansionCandidates(final Collection<String> hitTitles, final int limit) {
-        Map<String, Integer> score = new LinkedHashMap<>();
+        Map<String, Double> score = new LinkedHashMap<>();
         Set<String> hits = new LinkedHashSet<>();
         for (String title : hitTitles) {
             hits.add(normalize(title));
@@ -101,15 +116,15 @@ public class LinkGraphService {
         for (String hit : hits) {
             Set<String> targets = outgoing.getOrDefault(hit, Set.of());
             for (String target : targets) {
-                merge(score, target);
+                merge(score, target, linkWeight(hit, target));
             }
             for (String source : backlinks.getOrDefault(hit, Set.of())) {
-                merge(score, source);
+                merge(score, source, linkWeight(source, hit));
             }
         }
 
         List<String> ranked = new ArrayList<>(score.keySet());
-        ranked.sort((a, b) -> Integer.compare(score.get(b), score.get(a)));
+        ranked.sort((a, b) -> Double.compare(score.get(b), score.get(a)));
         List<String> result = new ArrayList<>(limit);
         for (String candidate : ranked) {
             if (hits.contains(candidate)) {
@@ -147,13 +162,41 @@ public class LinkGraphService {
     private volatile int noteCount = 0;
 
     /**
-     * Increments the connection score for a candidate title.
+     * Increments the connection score for a candidate title by the given weight.
      *
-     * @param score mutable score map
-     * @param key   normalized title
+     * @param score  mutable score map
+     * @param key    normalized title
+     * @param weight weight of the connection (link type dependent)
      */
-    private static void merge(Map<String, Integer> score, String key) {
-        score.merge(key, 1, Integer::sum);
+    private static void merge(Map<String, Double> score, String key, double weight) {
+        score.merge(key, weight, Double::sum);
+    }
+
+    /**
+     * Weight of the link from {@code from} to {@code to}, or the body weight
+     * when the edge is unknown (defensive fallback; every edge in the adjacency
+     * maps has a recorded weight).
+     *
+     * @param from normalized source title
+     * @param to   normalized target title
+     * @return summed weight of all links from {@code from} to {@code to}
+     */
+    private double linkWeight(String from, String to) {
+        return linkWeights.getOrDefault(from, Map.of()).getOrDefault(to, BODY_WEIGHT);
+    }
+
+    /**
+     * Weight of a single link by its position type.
+     *
+     * @param type link position type
+     * @return connection weight for that type
+     */
+    private static double weight(ObsidianNote.LinkType type) {
+        return switch (type) {
+            case BODY -> BODY_WEIGHT;
+            case FOOTER -> FOOTER_WEIGHT;
+            case FRONTMATTER -> FRONTMATTER_WEIGHT;
+        };
     }
 
     /**
@@ -188,6 +231,18 @@ public class LinkGraphService {
     private static Map<String, Set<String>> deepCopy(Map<String, Set<String>> src) {
         Map<String, Set<String>> copy = new HashMap<>();
         src.forEach((k, v) -> copy.put(k, Set.copyOf(v)));
+        return Map.copyOf(copy);
+    }
+
+    /**
+     * Immutable deep copy of the link-weight map, mirroring {@link #deepCopy}.
+     *
+     * @param src weight map to copy
+     * @return immutable copy safe for concurrent reads
+     */
+    private static Map<String, Map<String, Double>> deepCopyWeights(Map<String, Map<String, Double>> src) {
+        Map<String, Map<String, Double>> copy = new HashMap<>();
+        src.forEach((k, v) -> copy.put(k, Map.copyOf(v)));
         return Map.copyOf(copy);
     }
 }

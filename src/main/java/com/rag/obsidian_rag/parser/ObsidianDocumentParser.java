@@ -13,6 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,6 +33,15 @@ public class ObsidianDocumentParser {
             Pattern.compile("\\[\\[([^\\]\\|#]+)(?:#([^\\]\\|]+))?(?:\\|([^\\]]+))?\\]\\]");
     private static final Pattern INLINE_TAG = Pattern.compile("(?:^|[\\s(\\[{])#([A-Za-z][A-Za-z0-9_/-]*)");
     private static final Pattern HEADING_LINE = Pattern.compile("^#{1,6}\\s.*");
+
+    /**
+     * Section headings after which links are treated as footer links (weaker
+     * signal than body links). Matched case-insensitively on the heading text.
+     */
+    private static final Set<String> FOOTER_HEADINGS = Set.of(
+            "references", "related", "see also", "seealso", "links",
+            "further reading", "sources", "bibliography", "external links",
+            "related notes", "related links");
 
     /**
      * Parses a single markdown file into an {@link ObsidianNote}.
@@ -57,7 +67,7 @@ public class ObsidianDocumentParser {
 
         List<String> tags = extractTags(body, frontmatter);
         List<String> aliases = extractAliases(frontmatter);
-        List<ObsidianNote.WikiLink> links = extractLinks(body);
+        List<ObsidianNote.WikiLink> links = extractLinks(body, frontmatter);
 
         String fileName = file.getFileName().toString();
         String title = fileName.toLowerCase(Locale.ROOT).endsWith(".md")
@@ -257,17 +267,25 @@ public class ObsidianDocumentParser {
     }
 
     /**
-     * Extracts [[wikilinks]] including their optional #anchor and |alias parts.
-     * Links inside code fences are ignored and duplicates collapse to the first
-     * occurrence in document order.
+     * Extracts [[wikilinks]] including their optional #anchor and |alias parts,
+     * tagging each with the {@link ObsidianNote.LinkType} of the position it
+     * appears in: frontmatter links first, then body links, with links after a
+     * footer heading (references/related/…) marked as footer links. Links inside
+     * code fences are ignored and duplicates collapse to the first occurrence in
+     * document order.
      *
-     * @param body note body without frontmatter
-     * @return unique outgoing links
+     * @param body        note body without frontmatter
+     * @param frontmatter parsed frontmatter values (String or List&lt;String&gt;)
+     * @return unique outgoing links with their position type
      */
-    private List<ObsidianNote.WikiLink> extractLinks(String body) {
+    private List<ObsidianNote.WikiLink> extractLinks(String body, Map<String, Object> frontmatter) {
         LinkedHashSet<String> seen = new LinkedHashSet<>();
         List<ObsidianNote.WikiLink> links = new ArrayList<>();
+        for (Object value : frontmatter.values()) {
+            collectLinks(value, ObsidianNote.LinkType.FRONTMATTER, seen, links);
+        }
         boolean inFence = false;
+        boolean inFooter = false;
         for (String line : body.split("\r?\n")) {
             String trimmed = line.trim();
             if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
@@ -277,22 +295,87 @@ public class ObsidianDocumentParser {
             if (inFence) {
                 continue;
             }
+            if (HEADING_LINE.matcher(trimmed).matches()) {
+                String heading = trimmed.replaceAll("^#{1,6}\\s*", "").trim().toLowerCase(Locale.ROOT);
+                if (FOOTER_HEADINGS.contains(heading)) {
+                    inFooter = true;
+                }
+            }
             Matcher m = WIKI_LINK.matcher(line);
             while (m.find()) {
                 String target = m.group(1).trim();
                 if (target.isEmpty()) {
                     continue;
                 }
-                ObsidianNote.WikiLink link = new ObsidianNote.WikiLink(
-                        target,
-                        m.group(2) == null ? null : m.group(2).trim(),
-                        m.group(3) == null ? null : m.group(3).trim());
-                if (seen.add(link.target() + "|" + link.anchor() + "|" + link.alias())) {
-                    links.add(link);
-                }
+                addLink(links, seen, target, m.group(2), m.group(3),
+                        inFooter ? ObsidianNote.LinkType.FOOTER : ObsidianNote.LinkType.BODY);
             }
         }
         return links;
+    }
+
+    /**
+     * Feeds a scalar string, or every element of a list value, to link matching.
+     *
+     * @param value frontmatter value (String, List or null)
+     * @param type  link type to assign to any links found
+     * @param seen  dedup set (mutated in place)
+     * @param links destination list (mutated in place)
+     */
+    private void collectLinks(Object value, ObsidianNote.LinkType type,
+                              Set<String> seen, List<ObsidianNote.WikiLink> links) {
+        if (value instanceof String s) {
+            matchLinks(s, type, seen, links);
+        } else if (value instanceof List<?> list) {
+            for (Object item : list) {
+                if (item != null) {
+                    matchLinks(item.toString(), type, seen, links);
+                }
+            }
+        }
+    }
+
+    /**
+     * Matches every wikilink in a text fragment and appends it with the given type.
+     *
+     * @param text  text to scan for wikilinks
+     * @param type  link type to assign
+     * @param seen  dedup set (mutated in place)
+     * @param links destination list (mutated in place)
+     */
+    private void matchLinks(String text, ObsidianNote.LinkType type,
+                            Set<String> seen, List<ObsidianNote.WikiLink> links) {
+        Matcher m = WIKI_LINK.matcher(text);
+        while (m.find()) {
+            String target = m.group(1).trim();
+            if (target.isEmpty()) {
+                continue;
+            }
+            addLink(links, seen, target, m.group(2), m.group(3), type);
+        }
+    }
+
+    /**
+     * Builds a {@link ObsidianNote.WikiLink} and appends it unless an identical
+     * link (same target/anchor/alias) was already seen.
+     *
+     * @param links  destination list (mutated in place)
+     * @param seen   dedup set (mutated in place)
+     * @param target raw link target
+     * @param anchor raw anchor group, may be null
+     * @param alias  raw alias group, may be null
+     * @param type   link type to assign
+     */
+    private void addLink(List<ObsidianNote.WikiLink> links, Set<String> seen,
+                         String target, String anchor, String alias, ObsidianNote.LinkType type) {
+        ObsidianNote.WikiLink link = new ObsidianNote.WikiLink(
+                target,
+                anchor == null ? null : anchor.trim(),
+                alias == null ? null : alias.trim(),
+                type);
+        if (seen.add(link.target() + "|" + link.anchor() + "|" + link.alias())) {
+            links.add(link);
+        }
     }
 
     /**
@@ -308,7 +391,7 @@ public class ObsidianDocumentParser {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             StringBuilder hex = new StringBuilder();
             for (byte b : digest.digest(bytes)) {
-                hex.append(String.format("%02x", b));
+                hex.append(String.format("%02x", b & 0xFF));
             }
             return hex.toString();
         } catch (NoSuchAlgorithmException e) {

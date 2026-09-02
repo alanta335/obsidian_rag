@@ -20,7 +20,7 @@ obsidian:
     nvidia:
       api-key: ${NVIDIA_API_KEY:}
       base-url: https://integrate.api.nvidia.com/v1
-      chat-model: nvidia/nemotron-3-nano-30b-a3b
+      chat-model: nvidia/nemotron-3.5-lightning-30b-a3b
       embedding-model: nvidia/nemotron-3-embed-1b
       embedding-dimension: 2048
       batch-size: 16
