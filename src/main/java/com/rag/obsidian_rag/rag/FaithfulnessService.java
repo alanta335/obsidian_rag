@@ -11,6 +11,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -124,7 +125,11 @@ public class FaithfulnessService {
                 %s""".formatted(renderFragments(fragments), answer);
 
         try {
+            long start = System.nanoTime();
+            log.info("Faithfulness judge: calling chat model with {} fragments", fragments.size());
             String raw = chatModel.chat(prompt);
+            log.info("Faithfulness judge: model responded in {} ms",
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start));
             JsonNode node = mapper.readTree(stripFences(raw));
             boolean faithful = node.path("faithful").asBoolean(true);
             List<String> claims = new ArrayList<>();

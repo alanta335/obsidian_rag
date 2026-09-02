@@ -1,11 +1,9 @@
 package com.rag.obsidian_rag.config;
 
-import com.rag.obsidian_rag.rag.Assistant;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
-import dev.langchain4j.service.AiServices;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
 import org.springframework.context.annotation.Bean;
@@ -89,18 +87,6 @@ public class LangChain4jConfig {
                 .createTable(true)
                 .dropTableFirst(false)
                 .build();
-    }
-
-    /**
-     * Wires the {@link Assistant} interface to the chat model via LangChain4j AiServices,
-     * enabling structured output mapping to {@code RagAnswer}.
-     *
-     * @param chatModel shared chat model bean
-     * @return structured-output assistant
-     */
-    @Bean
-    public Assistant assistant(ChatModel chatModel) {
-        return AiServices.create(Assistant.class, chatModel);
     }
 
     /**

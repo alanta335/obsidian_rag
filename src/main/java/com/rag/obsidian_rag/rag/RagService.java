@@ -8,7 +8,10 @@ import com.rag.obsidian_rag.config.VaultProperties;
 import com.rag.obsidian_rag.graph.LinkGraphService;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingMatch;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
@@ -19,11 +22,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -39,36 +44,40 @@ public class RagService {
 
     private static final int SNIPPET_CHARS = 200;
 
-    private final Assistant assistant;
+    private final ChatModel chatModel;
     private final EmbeddingStore<TextSegment> store;
     private final EmbeddingModel queryEmbeddingModel;
     private final LinkGraphService graph;
     private final FaithfulnessService faithfulness;
     private final VaultProperties props;
+    private final ObjectMapper mapper;
 
     /**
      * Creates the orchestration service.
      *
-     * @param assistant           structured-output chat pipeline
+     * @param chatModel           chat model used for grounded generation
      * @param store               pgvector embedding store holding all indexed fragments
      * @param queryEmbeddingModel query-mode embedding model; must NOT be swapped for
      *                            the passage model (asymmetric NVIDIA embeddings)
      * @param graph               link graph used for linked-context expansion
      * @param faithfulness        citation validation and entailment judge
      * @param props               vault/retrieval/faithfulness configuration
+     * @param mapper              Jackson mapper for parsing the model's JSON answer
      */
-    public RagService(Assistant assistant,
+    public RagService(ChatModel chatModel,
                       EmbeddingStore<TextSegment> store,
                       @Qualifier("queryEmbeddingModel") EmbeddingModel queryEmbeddingModel,
                       LinkGraphService graph,
                       FaithfulnessService faithfulness,
-                      VaultProperties props) {
-        this.assistant = assistant;
+                      VaultProperties props,
+                      ObjectMapper mapper) {
+        this.chatModel = chatModel;
         this.store = store;
         this.queryEmbeddingModel = queryEmbeddingModel;
         this.graph = graph;
         this.faithfulness = faithfulness;
         this.props = props;
+        this.mapper = mapper;
     }
 
     /**
@@ -86,11 +95,16 @@ public class RagService {
      * any unsupported claims, and the full source audit trail
      */
     public ChatResponse chat(final String question) {
+        final long start = System.nanoTime();
+        log.info("Chat request received: question='{}'", question);
+
         final Embedding queryEmbedding = queryEmbeddingModel.embed(question).content();
+        log.info("Query embedded ({} ms)", elapsedMs(start));
 
         final var retrieval = props.getRetrieval();
         List<EmbeddingMatch<TextSegment>> primary =
                 search(queryEmbedding, retrieval.getMaxResults(), retrieval.getMinScore(), null);
+        log.info("Primary search returned {} fragments ({} ms)", primary.size(), elapsedMs(start));
 
         final List<SourceItem> sources = primary.stream().map(embeddingMatch ->
                 toSource(embeddingMatch, false)).toList();
@@ -105,6 +119,7 @@ public class RagService {
         List<EmbeddingMatch<TextSegment>> linked = List.of();
         if (retrieval.isExpandLinkedContext()) {
             linked = expandLinkedContext(queryEmbedding, primary, sources);
+            log.info("Linked-context expansion added {} fragments ({} ms)", linked.size(), elapsedMs(start));
         }
 
         final List<TextSegment> sentFragments = Stream.concat(
@@ -113,24 +128,31 @@ public class RagService {
                 ).map(EmbeddingMatch::embedded)
                 .toList();
         final String context = buildContext(sentFragments);
-        RagAnswer ragAnswer = assistant.answer(question, context);
+        log.info("Calling chat model with {} fragments ({} ms elapsed)", sentFragments.size(), elapsedMs(start));
+        RagAnswer ragAnswer = answer(question, context);
+        log.info("Chat model answered ({} ms elapsed)", elapsedMs(start));
 
         List<Citation> citations = faithfulness.validateCitations(ragAnswer, sentFragments);
+        log.info("Validated {} citations ({} ms elapsed)", citations.size(), elapsedMs(start));
         boolean faithful = true;
         List<String> unsupported = List.of();
         boolean regenerated = false;
 
         if (props.getFaithfulness().isVerify() && ragAnswer.isContextSufficient()) {
+            log.info("Running faithfulness judge ({} ms elapsed)", elapsedMs(start));
             FaithfulnessService.Verdict verdict = faithfulness.judge(ragAnswer.getAnswer(), sentFragments);
             faithful = verdict.faithful();
             unsupported = verdict.unsupportedClaims();
+            log.info("Faithfulness verdict: faithful={}, unsupported={} ({} ms elapsed)",
+                    faithful, unsupported.size(), elapsedMs(start));
 
             if (!verdict.faithful() && !verdict.judgeError()
                     && props.getFaithfulness().isRegenerateIfUnfaithful()) {
                 String retryQuestion = question
                         + "\n\nIMPORTANT: your previous answer contained unsupported claims: "
                         + unsupported + ". Answer again using ONLY the provided context.";
-                RagAnswer retry = assistant.answer(retryQuestion, context);
+                log.info("Regenerating answer after unfaithful verdict ({} ms elapsed)", elapsedMs(start));
+                RagAnswer retry = answer(retryQuestion, context);
                 List<Citation> retryCitations = faithfulness.validateCitations(retry, sentFragments);
                 FaithfulnessService.Verdict secondVerdict =
                         faithfulness.judge(retry.getAnswer(), sentFragments);
@@ -141,10 +163,15 @@ public class RagService {
                     faithful = secondVerdict.faithful();
                     unsupported = secondVerdict.unsupportedClaims();
                     regenerated = true;
+                    log.info("Regenerated answer accepted: faithful={}, unsupported={} ({} ms elapsed)",
+                            faithful, unsupported.size(), elapsedMs(start));
+                } else {
+                    log.info("Regenerated answer rejected (not better than original)");
                 }
             }
         }
 
+        log.info("Chat request completed in {} ms", elapsedMs(start));
         return new ChatResponse(
                 ragAnswer.getAnswer(),
                 faithful,
@@ -263,6 +290,74 @@ public class RagService {
                 .filter(filter)
                 .build();
         return store.search(request).matches();
+    }
+
+    /**
+     * Milliseconds elapsed since the given start timestamp.
+     *
+     * @param startNanos System.nanoTime() value taken at the start of the operation
+     * @return elapsed time in milliseconds
+     */
+    private static long elapsedMs(long startNanos) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+    }
+
+    /**
+     * Generates a structured answer via a plain chat call with a JSON-response
+     * prompt. AiServices function-calling structured output is unreliable on the
+     * NVIDIA endpoint (hangs or returns empty), so the model is asked for JSON
+     * directly and parsed here, mirroring {@link FaithfulnessService#judge}.
+     *
+     * @param question user question
+     * @param context  retrieved fragments
+     * @return parsed answer; contextSufficient=false when the model output is not parseable
+     */
+    private RagAnswer answer(final String question, final String context) {
+        String system = """
+                You are a precise research assistant answering questions about the user's personal Obsidian vault.
+
+                HARD RULES (non-negotiable):
+                1. Base your answer ONLY on the fragments provided in <context>. Never use outside knowledge, assumptions, or speculation.
+                2. If the context does not contain enough information to answer, set contextSufficient=false, leave answer=null and citations=[].
+                3. Every claim you make MUST be backed by at least one entry in citations[].
+                4. Each citation must reference the exact noteTitle and chunkIndex shown in the fragment header, include a VERBATIM quote copied from that fragment, and a short reasonForUse explaining why it supports the claim.
+                5. Never invent notes, titles, chunk indices, quotes, or sources.
+
+                Respond with ONLY a JSON object, no markdown fences and no extra text, in exactly this shape:
+                {"answer": "your answer or null", "contextSufficient": true, "citations": [{"noteTitle": "...", "filePath": "...", "chunkIndex": 0, "quote": "verbatim quote", "reasonForUse": "..."}]}
+                """;
+        String user = "Question: " + question
+                + "\n\nContext fragments from the vault:\n<context>\n" + context + "\n</context>";
+        String raw = chatModel.chat(SystemMessage.from(system), UserMessage.from(user)).aiMessage().text();
+        try {
+            return mapper.readValue(stripFences(raw), RagAnswer.class);
+        } catch (Exception e) {
+            log.warn("Failed to parse model answer as JSON; treating context as insufficient: {}", e.getMessage());
+            RagAnswer fallback = new RagAnswer();
+            fallback.setContextSufficient(false);
+            return fallback;
+        }
+    }
+
+    /**
+     * Removes wrapping markdown code fences some models add despite instructions.
+     *
+     * @param raw model response
+     * @return bare JSON text ready for parsing
+     */
+    private static String stripFences(String raw) {
+        String s = raw.trim();
+        if (s.startsWith("```")) {
+            int firstNl = s.indexOf('\n');
+            if (firstNl > 0) {
+                s = s.substring(firstNl + 1);
+            }
+            int lastFence = s.lastIndexOf("```");
+            if (lastFence >= 0) {
+                s = s.substring(0, lastFence);
+            }
+        }
+        return s.trim();
     }
 
     /**
