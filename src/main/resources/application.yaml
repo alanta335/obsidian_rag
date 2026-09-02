@@ -32,8 +32,14 @@ obsidian:
       min-score: 0.55
       min-results: 1
       expand-linked-context: true
-      linked-min-score: 0.30
+
       linked-max-notes: 3
+      graph-threshold: 0.5
+      vector-threshold: 0.55
+      graph-weight: 0.5
+      vector-weight: 0.5
+      fragment-threshold: 0.30
+      max-context-length: 12000
 
     faithfulness:
       verify: true

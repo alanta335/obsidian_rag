@@ -68,9 +68,11 @@ public class FaithfulnessService {
      * @return citations that survived validation, in original order
      */
     public List<Citation> validateCitations(final RagAnswer ragAnswer, final List<TextSegment> sentFragments) {
-        final Set<String> validKeys = sentFragments.stream()
-                .map(textSegment -> key(titleOf(textSegment), chunkIndexOf(textSegment)))
-                .collect(Collectors.toSet());
+        final Map<String, TextSegment> validFragments = sentFragments.stream()
+                .collect(Collectors.toMap(
+                        textSegment -> key(titleOf(textSegment), chunkIndexOf(textSegment)),
+                        Function.identity(),
+                        (existing, replacement) -> existing));
 
         return ragAnswer.getCitations().stream()
                 .filter(Objects::nonNull)
@@ -80,15 +82,13 @@ public class FaithfulnessService {
                 .filter(citation -> {
                     final String k = key(citation.getNoteTitle(), citation.getChunkIndex());
 
-                    if (!validKeys.contains(k)) {
-                        log.debug(
-                                "Dropped fabricated citation {}#{}",
-                                citation.getNoteTitle(),
-                                citation.getChunkIndex()
-                        );
+                    TextSegment fragment = validFragments.get(k);
+                      if (fragment == null || citation.getQuote() == null || citation.getQuote().isBlank()
+                              || !fragment.text().contains(citation.getQuote())) {
+                          log.debug("Dropped citation with invalid source or non-verbatim quote {}#{}",
+                                citation.getNoteTitle(), citation.getChunkIndex());
                         return false;
-                    }
-
+                      }
                     return true;
                 })
                 .collect(Collectors.toMap(

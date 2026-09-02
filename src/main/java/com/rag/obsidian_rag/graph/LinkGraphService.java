@@ -36,16 +36,19 @@ public class LinkGraphService {
         Map<String, String> t2p = new HashMap<>();
         Map<String, String> n2t = new HashMap<>();
 
+        // Register every real title first. A real title always wins over an alias,
+        // regardless of note iteration order.
         for (ObsidianNote note : notes) {
             String norm = normalize(note.noteTitle());
             t2p.put(norm, note.relativePath());
-            n2t.putIfAbsent(norm, note.noteTitle());
+            n2t.put(norm, note.noteTitle());
+        }
+        for (ObsidianNote note : notes) {
             for (String alias : note.aliases()) {
                 String aliasNorm = normalize(alias);
-                n2t.putIfAbsent(aliasNorm, note.noteTitle());
-                if (!t2p.containsKey(aliasNorm)) {
-                    // alias resolves to the same path as its note
-                    t2p.putIfAbsent(aliasNorm, note.relativePath());
+                if (!n2t.containsKey(aliasNorm)) {
+                    n2t.put(aliasNorm, note.noteTitle());
+                    t2p.put(aliasNorm, note.relativePath());
                 }
             }
         }
@@ -106,6 +109,34 @@ public class LinkGraphService {
      * @param limit     maximum number of candidates to return
      * @return candidate display titles, highest weighted connection count first, hits excluded
      */
+    /**
+     * Returns every connected page and its weighted connection score, excluding hits.
+     * Scores are intentionally unnormalized; the retrieval layer normalizes them per pool.
+     */
+    public Map<String, Double> connectionScores(final Collection<String> hitTitles) {
+        Map<String, Double> score = new LinkedHashMap<>();
+        Set<String> hits = new LinkedHashSet<>();
+        for (String title : hitTitles) {
+            hits.add(normalize(title));
+        }
+        for (String hit : hits) {
+            for (String target : outgoing.getOrDefault(hit, Set.of())) {
+                merge(score, target, linkWeight(hit, target));
+            }
+            for (String source : backlinks.getOrDefault(hit, Set.of())) {
+                merge(score, source, linkWeight(source, hit));
+            }
+        }
+        return score.entrySet().stream()
+                .filter(entry -> !hits.contains(entry.getKey()))
+                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .collect(java.util.stream.Collectors.toMap(
+                        entry -> normalizedToTitle.get(entry.getKey()),
+                        Map.Entry::getValue,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+    }
+
     public List<String> expansionCandidates(final Collection<String> hitTitles, final int limit) {
         Map<String, Double> score = new LinkedHashMap<>();
         Set<String> hits = new LinkedHashSet<>();

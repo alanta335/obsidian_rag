@@ -164,9 +164,9 @@ obsidian:
     state-file: ./data/index-state.json
     nvidia:
       base-url: https://integrate.api.nvidia.com/v1
-      chat-model: deepseek-ai/deepseek-v4-flash-0731
-      embedding-model: nvidia/nv-embedqa-e5-v5
-      embedding-dimension: 1024
+      chat-model: openai/gpt-oss-20b
+      embedding-model: nvidia/nemotron-3-embed-1b
+      embedding-dimension: 2048
       batch-size: 16            # texts per embedding request (free-tier friendly)
       temperature: 0.2
       max-tokens: 4096
@@ -175,8 +175,14 @@ obsidian:
       min-score: 0.55           # below this → refusal guard triggers
       min-results: 1
       expand-linked-context: true   # pull chunks from wikilinked/backlinked notes
-      linked-min-score: 0.30
-      linked-max-notes: 3
+
+      linked-max-notes: 3            # top-K page fill
+      graph-threshold: 0.5           # normalized graph score for guaranteed pages
+      vector-threshold: 0.55         # page vector score for guaranteed pages
+      graph-weight: 0.5
+      vector-weight: 0.5
+      fragment-threshold: 0.30
+      max-context-length: 12000
     faithfulness:
       verify: true              # LLM entailment judge (doubles chat calls per question)
       regenerate-if-unfaithful: true

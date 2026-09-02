@@ -26,11 +26,11 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Orchestrates retrieval, grounded generation, citation validation and the
@@ -106,8 +106,8 @@ public class RagService {
                 search(queryEmbedding, retrieval.getMaxResults(), retrieval.getMinScore(), null);
         log.info("Primary search returned {} fragments ({} ms)", primary.size(), elapsedMs(start));
 
-        final List<SourceItem> sources = primary.stream().map(embeddingMatch ->
-                toSource(embeddingMatch, false)).toList();
+        final List<SourceItem> sources = new ArrayList<>(primary.stream().map(embeddingMatch ->
+                toSource(embeddingMatch, false)).toList());
 
         if (primary.size() < retrieval.getMinResults()) {
             log.info("Refusing question (only {} fragments above minScore)", primary.size());
@@ -116,17 +116,21 @@ public class RagService {
                     sources);
         }
 
-        List<EmbeddingMatch<TextSegment>> linked = List.of();
+        List<EmbeddingMatch<TextSegment>> selected = primary;
         if (retrieval.isExpandLinkedContext()) {
-            linked = expandLinkedContext(queryEmbedding, primary, sources);
-            log.info("Linked-context expansion added {} fragments ({} ms)", linked.size(), elapsedMs(start));
+            selected = hybridRetrieve(queryEmbedding, primary);
+            log.info("Hybrid retrieval selected {} fragments ({} ms)", selected.size(), elapsedMs(start));
         }
 
-        final List<TextSegment> sentFragments = Stream.concat(
-                        primary.stream(),
-                        linked.stream()
-                ).map(EmbeddingMatch::embedded)
-                .toList();
+        final List<TextSegment> sentFragments = truncateToContextLimit(
+                selected.stream().map(EmbeddingMatch::embedded).toList(), retrieval.getMaxContextLength());
+        sources.clear();
+        for (TextSegment fragment : sentFragments) {
+            EmbeddingMatch<TextSegment> match = selected.stream()
+                    .filter(candidate -> candidate.embedded() == fragment)
+                    .findFirst().orElseThrow();
+            sources.add(toSource(match, !primary.contains(match)));
+        }
         final String context = buildContext(sentFragments);
         log.info("Calling chat model with {} fragments ({} ms elapsed)", sentFragments.size(), elapsedMs(start));
         RagAnswer ragAnswer = answer(question, context);
@@ -134,14 +138,14 @@ public class RagService {
 
         List<Citation> citations = faithfulness.validateCitations(ragAnswer, sentFragments);
         log.info("Validated {} citations ({} ms elapsed)", citations.size(), elapsedMs(start));
-        boolean faithful = true;
+        Boolean faithful = null;
         List<String> unsupported = List.of();
         boolean regenerated = false;
 
         if (props.getFaithfulness().isVerify() && ragAnswer.isContextSufficient()) {
             log.info("Running faithfulness judge ({} ms elapsed)", elapsedMs(start));
             FaithfulnessService.Verdict verdict = faithfulness.judge(ragAnswer.getAnswer(), sentFragments);
-            faithful = verdict.faithful();
+            faithful = verdict.judgeError() ? null : verdict.faithful();
             unsupported = verdict.unsupportedClaims();
             log.info("Faithfulness verdict: faithful={}, unsupported={} ({} ms elapsed)",
                     faithful, unsupported.size(), elapsedMs(start));
@@ -156,8 +160,9 @@ public class RagService {
                 List<Citation> retryCitations = faithfulness.validateCitations(retry, sentFragments);
                 FaithfulnessService.Verdict secondVerdict =
                         faithfulness.judge(retry.getAnswer(), sentFragments);
-                if (secondVerdict.unsupportedClaims().size() < unsupported.size()
-                        || (secondVerdict.faithful() && !verdict.faithful())) {
+                if (!secondVerdict.judgeError()
+                        && (secondVerdict.unsupportedClaims().size() < unsupported.size()
+                        || (secondVerdict.faithful() && !verdict.faithful()))) {
                     ragAnswer = retry;
                     citations = retryCitations;
                     faithful = secondVerdict.faithful();
@@ -240,36 +245,76 @@ public class RagService {
      *                       flagged as linked (mutated in place)
      * @return extra matches from linked notes (may be empty)
      */
-    private List<EmbeddingMatch<TextSegment>> expandLinkedContext(final Embedding queryEmbedding,
-                                                                  final List<EmbeddingMatch<TextSegment>> primary,
-                                                                  final List<SourceItem> sources) {
-        final Set<String> hitTitles = primary.stream().map(
-                m -> m.embedded().metadata()
-                        .getString("note_title")).collect(Collectors.toSet());
-
+    private List<EmbeddingMatch<TextSegment>> hybridRetrieve(final Embedding queryEmbedding,
+                                                               final List<EmbeddingMatch<TextSegment>> primary) {
         final var retrieval = props.getRetrieval();
-        final List<String> candidates = graph.expansionCandidates(hitTitles, retrieval.getLinkedMaxNotes());
+        final Set<String> hitTitles = primary.stream()
+                .map(m -> m.embedded().metadata().getString("note_title"))
+                .collect(Collectors.toSet());
+        final Map<String, Double> graphScores = graph.connectionScores(hitTitles);
+        final Map<String, Double> vectorScores = new java.util.HashMap<>();
+        int candidateResults = Math.max(retrieval.getMaxResults(),
+                Math.max(1, graph.noteCount()) * Math.max(1, retrieval.getLinkedSegmentsPerNote()));
+        for (EmbeddingMatch<TextSegment> match : search(queryEmbedding, candidateResults, 0.0, null)) {
+            vectorScores.merge(match.embedded().metadata().getString("file_path"), match.score(), Math::max);
+        }
+        for (EmbeddingMatch<TextSegment> match : primary) {
+            vectorScores.merge(match.embedded().metadata().getString("file_path"), match.score(), Math::max);
+        }
 
-        final List<EmbeddingMatch<TextSegment>> extra = new ArrayList<>();
+        Set<String> pages = new java.util.LinkedHashSet<>();
+        primary.forEach(match -> pages.add(match.embedded().metadata().getString("file_path")));
+        graphScores.keySet().stream().map(graph::resolvePath).filter(Objects::nonNull).forEach(pages::add);
+        double maxGraph = graphScores.values().stream().mapToDouble(Double::doubleValue).max().orElse(1.0);
+        Set<String> selectedPages = new java.util.LinkedHashSet<>();
+        primary.forEach(match -> selectedPages.add(match.embedded().metadata().getString("file_path")));
+        for (String path : pages) {
+            double graphScore = graphScore(path, graphScores) / maxGraph;
+            if (graphScore >= retrieval.getGraphThreshold()
+                    && vectorScores.getOrDefault(path, 0.0) >= retrieval.getVectorThreshold()) {
+                selectedPages.add(path);
+            }
+        }
+        pages.stream().filter(path -> !selectedPages.contains(path))
+                .sorted((left, right) -> Double.compare(combinedScore(right, graphScores, vectorScores, maxGraph),
+                        combinedScore(left, graphScores, vectorScores, maxGraph)))
+                .limit(Math.max(0, retrieval.getLinkedMaxNotes()))
+                .forEach(selectedPages::add);
 
-        candidates.stream()
-                .map(graph::resolvePath)
-                .filter(Objects::nonNull)
-                .flatMap(path -> {
-                    final Filter filter =
-                            MetadataFilterBuilder.metadataKey("file_path").isEqualTo(path);
-                    return search(
-                            queryEmbedding,
-                            retrieval.getLinkedSegmentsPerNote(),
-                            retrieval.getLinkedMinScore(),
-                            filter
-                    ).stream();
-                })
-                .forEach(embeddingMatch -> {
-                    extra.add(embeddingMatch);
-                    sources.add(toSource(embeddingMatch, true));
-                });
-        return extra;
+        List<EmbeddingMatch<TextSegment>> result = new ArrayList<>();
+        for (String path : selectedPages) {
+            Filter filter = MetadataFilterBuilder.metadataKey("file_path").isEqualTo(path);
+            result.addAll(search(queryEmbedding, retrieval.getLinkedSegmentsPerNote(),
+                    retrieval.getFragmentThreshold(), filter));
+        }
+        result.sort((left, right) -> Double.compare(right.score(), left.score()));
+        return result;
+    }
+
+    private double graphScore(String path, Map<String, Double> graphScores) {
+        return graphScores.entrySet().stream()
+                .filter(entry -> path.equals(graph.resolvePath(entry.getKey())))
+                .mapToDouble(Map.Entry::getValue).max().orElse(0.0);
+    }
+
+    private double combinedScore(String path, Map<String, Double> graphScores,
+                                 Map<String, Double> vectorScores, double maxGraph) {
+        final var retrieval = props.getRetrieval();
+        return retrieval.getGraphWeight() * graphScore(path, graphScores) / maxGraph
+                + retrieval.getVectorWeight() * vectorScores.getOrDefault(path, 0.0);
+    }
+
+    private List<TextSegment> truncateToContextLimit(List<TextSegment> fragments, int maxLength) {
+        if (maxLength <= 0) return fragments;
+        List<TextSegment> result = new ArrayList<>();
+        int length = 0;
+        for (TextSegment fragment : fragments) {
+            int addition = fragment.text().length() + 2;
+            if (length + addition > maxLength) break;
+            result.add(fragment);
+            length += addition;
+        }
+        return result;
     }
 
     /**

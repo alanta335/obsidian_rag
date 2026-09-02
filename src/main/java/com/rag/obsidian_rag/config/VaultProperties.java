@@ -49,9 +49,15 @@ public class VaultProperties {
         private double minScore = 0.55;
         private int minResults = 1;
         private boolean expandLinkedContext = true;
-        private double linkedMinScore = 0.30;
+
         private int linkedMaxNotes = 3;
         private int linkedSegmentsPerNote = 2;
+        private double graphThreshold = 0.5;
+        private double vectorThreshold = 0.55;
+        private double graphWeight = 0.5;
+        private double vectorWeight = 0.5;
+        private double fragmentThreshold = 0.30;
+        private int maxContextLength = 12000;
     }
 
     /** Gating for the entailment-judge layer. */
