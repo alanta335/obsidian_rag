@@ -128,7 +128,7 @@ public class FaithfulnessService {
             JsonNode node = mapper.readTree(stripFences(raw));
             boolean faithful = node.path("faithful").asBoolean(true);
             List<String> claims = new ArrayList<>();
-            node.path("unsupported_claims").forEach(c -> claims.add(c.asText()));
+            node.path("unsupported_claims").forEach(c -> claims.add(c.asString()));
             return new Verdict(faithful, claims, false);
         } catch (Exception e) {
             log.warn("Faithfulness judge failed; treating answer as faithful: {}", e.getMessage());
